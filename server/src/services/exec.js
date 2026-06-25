@@ -15,6 +15,15 @@ export function run(command, args = [], options = {}) {
 
     let stdout = '';
     let stderr = '';
+    let timer = null;
+    let settled = false;
+
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer); // don't leak the SIGKILL timer
+      resolve(result);
+    };
 
     child.stdout.on('data', (d) => {
       stdout += d.toString();
@@ -24,15 +33,15 @@ export function run(command, args = [], options = {}) {
     });
 
     child.on('error', (err) => {
-      resolve({ code: -1, stdout, stderr: stderr + err.message });
+      finish({ code: -1, stdout, stderr: stderr + err.message });
     });
-
     child.on('close', (code) => {
-      resolve({ code: code ?? -1, stdout, stderr });
+      finish({ code: code ?? -1, stdout, stderr });
     });
 
     if (options.timeout) {
-      setTimeout(() => child.kill('SIGKILL'), options.timeout);
+      timer = setTimeout(() => child.kill('SIGKILL'), options.timeout);
+      timer.unref?.(); // never keep the event loop alive just for this timer
     }
   });
 }
@@ -41,6 +50,7 @@ export function run(command, args = [], options = {}) {
  * Stream a command's output line by line via a callback.
  * Useful for long deploys where the UI shows live logs.
  * Returns a promise resolving to the final exit code.
+ * Pass options.timeout (ms) to SIGKILL a hung child (e.g. a wedged pm2 call).
  */
 export function runStream(command, args = [], options = {}, onLine) {
   return new Promise((resolve) => {
@@ -49,6 +59,16 @@ export function runStream(command, args = [], options = {}, onLine) {
       env: { ...process.env, ...(options.env || {}) },
       shell: options.shell || false,
     });
+
+    let timer = null;
+    let settled = false;
+
+    const finish = (code) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(code);
+    };
 
     const emit = (chunk, stream) => {
       const text = chunk.toString();
@@ -61,8 +81,16 @@ export function runStream(command, args = [], options = {}, onLine) {
     child.stderr.on('data', (d) => emit(d, 'stderr'));
     child.on('error', (err) => {
       onLine?.({ stream: 'stderr', line: err.message });
-      resolve(-1);
+      finish(-1);
     });
-    child.on('close', (code) => resolve(code ?? -1));
+    child.on('close', (code) => finish(code ?? -1));
+
+    if (options.timeout) {
+      timer = setTimeout(() => {
+        onLine?.({ stream: 'stderr', line: `[timed out after ${options.timeout}ms — killed]` });
+        child.kill('SIGKILL');
+      }, options.timeout);
+      timer.unref?.();
+    }
   });
 }
