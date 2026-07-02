@@ -65,9 +65,31 @@ export function getProject(projectId) {
   };
 }
 
+/** Filesystem-safe folder name from a display name. */
+export function slugify(name) {
+  return (
+    String(name || '')
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/^[-.]+|[-.]+$/g, '') || 'app'
+  );
+}
+
+/** Folder a project's services live under (stored at creation, never moved). */
+export function projectPath(project) {
+  return project.path || path.join(config.projectsRoot, slugify(project.name));
+}
+
 export function createProject({ name, description = '' }) {
   const db = read();
-  const project = { id: id(), name, description, createdAt: now() };
+  const project = {
+    id: id(),
+    name,
+    description,
+    path: path.join(config.projectsRoot, slugify(name)),
+    createdAt: now(),
+  };
   db.projects.push(project);
   write(db);
   return project;
@@ -117,6 +139,9 @@ export function getServiceByRepo(fullName) {
   return s ? withLatestDeployment(db, s) : null;
 }
 
+// pm2 process name is always derived from the service name — never user-set.
+const pm2NameFor = (name) => String(name || 'service').trim().replace(/\s+/g, '-');
+
 export function createService(projectId, input = {}) {
   const db = read();
   if (!db.projects.find((p) => p.id === projectId)) return null;
@@ -133,9 +158,11 @@ export function createService(projectId, input = {}) {
     rootDirectory: input.rootDirectory || '',
     localPath: input.localPath || '', // absolute dir on the VPS
     // build / runtime
+    serviceKind: input.serviceKind || 'auto', // 'auto' | 'backend' | 'static'
     buildCommand: input.buildCommand || '',
     startCommand: input.startCommand || '',
-    pm2Name: input.pm2Name || input.name || 'service',
+    staticOutputDir: input.staticOutputDir || '', // build output for static kind
+    pm2Name: pm2NameFor(input.name),
     port: input.port || '',
     // deploy behaviour
     autoDeploy: Boolean(input.autoDeploy),
@@ -156,10 +183,11 @@ export function updateService(serviceId, patch) {
   if (!s) return null;
   const allowed = [
     'name', 'icon', 'sourceType', 'repoUrl', 'repoFullName', 'branch',
-    'rootDirectory', 'localPath', 'buildCommand', 'startCommand', 'pm2Name',
-    'port', 'autoDeploy', 'domains', 'variables',
+    'rootDirectory', 'localPath', 'serviceKind', 'buildCommand', 'startCommand',
+    'staticOutputDir', 'port', 'autoDeploy', 'domains', 'variables',
   ];
   for (const k of allowed) if (k in patch) s[k] = patch[k];
+  if ('name' in patch) s.pm2Name = pm2NameFor(s.name); // pm2 name follows the service name
   s.updatedAt = now();
   write(db);
   return s;

@@ -43,6 +43,10 @@ export default function ServiceDetail() {
   if (!service) return <div className="p-8 text-muted">Loading…</div>;
   const st = DEPLOY_STATUS[service.latestDeployment?.status] || DEPLOY_STATUS.none;
   const SourceIcon = service.sourceType === 'github' ? Icon.github : Icon.box;
+  // Static sites have no pm2 process — metrics and runtime logs don't apply.
+  const isStatic = service.serviceKind === 'static';
+  const tabs = isStatic ? TABS.filter((t) => !['metrics', 'logs'].includes(t.key)) : TABS;
+  const activeTab = tabs.some((t) => t.key === tab) ? tab : 'deployments';
 
   return (
     <div className="min-h-full flex flex-col">
@@ -77,12 +81,12 @@ export default function ServiceDetail() {
         </div>
 
         <nav className="flex gap-1 -mb-px">
-          {TABS.map(({ key, label, icon: I }) => (
+          {tabs.map(({ key, label, icon: I }) => (
             <button
               key={key}
               onClick={() => setTab(key)}
               className={`flex items-center gap-2 px-3.5 py-2.5 text-sm border-b-2 transition ${
-                tab === key ? 'border-brand text-white' : 'border-transparent text-muted hover:text-gray-200'
+                activeTab === key ? 'border-brand text-white' : 'border-transparent text-muted hover:text-gray-200'
               }`}
             >
               <I width={15} height={15} /> {label}
@@ -92,12 +96,12 @@ export default function ServiceDetail() {
       </header>
 
       <div className="flex-1 p-8 bg-grid-fade">
-        {tab === 'deployments' && <DeploymentsTab service={service} onDeployed={load} />}
-        {tab === 'variables' && <VariablesTab serviceId={service.id} />}
-        {tab === 'metrics' && <MetricsTab service={service} />}
-        {tab === 'logs' && <LogsTab service={service} />}
-        {tab === 'domains' && <DomainsTab service={service} onChange={setService} />}
-        {tab === 'settings' && <SettingsTab service={service} onChange={setService} onDeleted={() => navigate(`/projects/${id}`)} />}
+        {activeTab === 'deployments' && <DeploymentsTab service={service} onDeployed={load} />}
+        {activeTab === 'variables' && <VariablesTab serviceId={service.id} />}
+        {activeTab === 'metrics' && <MetricsTab service={service} />}
+        {activeTab === 'logs' && <LogsTab service={service} />}
+        {activeTab === 'domains' && <DomainsTab service={service} onChange={setService} />}
+        {activeTab === 'settings' && <SettingsTab service={service} onChange={setService} onDeleted={() => navigate(`/projects/${id}`)} />}
       </div>
     </div>
   );

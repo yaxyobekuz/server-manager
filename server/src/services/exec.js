@@ -9,7 +9,9 @@ export function run(command, args = [], options = {}) {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd: options.cwd || process.cwd(),
-      env: { ...process.env, ...(options.env || {}) },
+      // replaceEnv: use exactly this env (lets callers *remove* inherited
+      // vars — a spread merge can only add/override, never delete).
+      env: options.replaceEnv ?? { ...process.env, ...(options.env || {}) },
       shell: options.shell || false,
     });
 
@@ -56,7 +58,7 @@ export function runStream(command, args = [], options = {}, onLine) {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd: options.cwd || process.cwd(),
-      env: { ...process.env, ...(options.env || {}) },
+      env: options.replaceEnv ?? { ...process.env, ...(options.env || {}) },
       shell: options.shell || false,
     });
 

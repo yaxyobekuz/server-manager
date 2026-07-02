@@ -11,6 +11,7 @@ npm-debug.log*
 # Server runtime
 server/.env
 server/data/*.json
+server/data/metrics/
 !server/data/.gitkeep
 
 # Client

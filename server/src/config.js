@@ -16,6 +16,8 @@ export const config = {
   rootDir: path.join(__dirname, '..', '..'),
   dataDir: path.join(__dirname, '..', 'data'),
   clientDist: path.join(__dirname, '..', '..', 'client', 'dist'),
+  // Where managed projects live: <projectsRoot>/<project>/<service>
+  projectsRoot: process.env.PROJECTS_ROOT || '/var/www',
 };
 
 if (!config.adminPassword) {

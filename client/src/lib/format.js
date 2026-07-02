@@ -5,6 +5,18 @@ export function formatBytes(bytes) {
   return `${(mb / 1024).toFixed(2)} GB`;
 }
 
+export function formatRate(bytesPerSec) {
+  if (!bytesPerSec) return '0 KB/s';
+  const kb = bytesPerSec / 1024;
+  if (kb < 1024) return `${kb < 10 ? kb.toFixed(1) : kb.toFixed(0)} KB/s`;
+  return `${(kb / 1024).toFixed(1)} MB/s`;
+}
+
+export function formatMonth(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleString('en', { month: 'short', year: 'numeric' });
+}
+
 export function formatUptime(startMs) {
   if (!startMs) return '—';
   const s = Math.floor((Date.now() - startMs) / 1000);

@@ -15,7 +15,13 @@ export default function SettingsTab({ service, onChange, onDeleted }) {
   };
 
   const remove = async () => {
-    if (!confirm(`Delete service "${service.name}"?`)) return;
+    const warning =
+      `Delete service "${service.name}"?\n\n` +
+      `This permanently removes everything it owns:\n` +
+      `• pm2 process (${service.pm2Name || service.name})\n` +
+      `• domains, nginx configs and SSL certificates\n` +
+      `• its folder: ${service.localPath || '—'}`;
+    if (!confirm(warning)) return;
     await api.deleteService(service.id);
     onDeleted();
   };
@@ -34,11 +40,24 @@ export default function SettingsTab({ service, onChange, onDeleted }) {
         <Row label="VPS path"><input className="input font-mono text-xs" value={form.localPath} onChange={(e) => set('localPath', e.target.value)} placeholder="/var/www/myapp" /></Row>
       </Section>
 
-      <Section title="Build & Deploy">
-        <Row label="Build command"><input className="input font-mono text-xs" value={form.buildCommand} onChange={(e) => set('buildCommand', e.target.value)} placeholder="npm ci && npm run build" /></Row>
-        <Row label="Start command"><input className="input font-mono text-xs" value={form.startCommand} onChange={(e) => set('startCommand', e.target.value)} placeholder="npm start" /></Row>
-        <Row label="PM2 process name"><input className="input font-mono text-xs" value={form.pm2Name} onChange={(e) => set('pm2Name', e.target.value)} /></Row>
-        <Row label="Port"><input className="input" value={form.port} onChange={(e) => set('port', e.target.value)} placeholder="3000" /></Row>
+      <Section title="Build & Deploy" desc="Leave fields empty to auto-detect from the project on deploy.">
+        <Row label="Service type">
+          <select className="input" value={form.serviceKind || 'auto'} onChange={(e) => set('serviceKind', e.target.value)}>
+            <option value="auto">Auto-detect</option>
+            <option value="backend">Backend (pm2 process)</option>
+            <option value="static">Static site (React/Vite build)</option>
+          </select>
+        </Row>
+        <Row label="Build command"><input className="input font-mono text-xs" value={form.buildCommand} onChange={(e) => set('buildCommand', e.target.value)} placeholder="auto (e.g. npm install && npm run build)" /></Row>
+        {form.serviceKind !== 'static' && (
+          <>
+            <Row label="Start command"><input className="input font-mono text-xs" value={form.startCommand} onChange={(e) => set('startCommand', e.target.value)} placeholder="auto (e.g. npm start)" /></Row>
+            <Row label="Port"><input className="input" value={form.port} onChange={(e) => set('port', e.target.value)} placeholder="3000" /></Row>
+          </>
+        )}
+        {form.serviceKind === 'static' && (
+          <Row label="Output directory"><input className="input font-mono text-xs" value={form.staticOutputDir || ''} onChange={(e) => set('staticOutputDir', e.target.value)} placeholder="auto (dist / build)" /></Row>
+        )}
         {service.sourceType === 'github' && (
           <Row label="Auto-deploy">
             <button

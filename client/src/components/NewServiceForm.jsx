@@ -2,7 +2,10 @@ import { useState } from 'react';
 import { api } from '../api/client.js';
 import { Icon } from './Icons.jsx';
 
-export default function NewServiceForm({ projectId, onCreated, onCancel }) {
+const slugify = (s) =>
+  String(s || '').toLowerCase().trim().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '');
+
+export default function NewServiceForm({ projectId, projectName, onCreated, onCancel }) {
   const [step, setStep] = useState('source'); // 'source' | 'configure'
   const [sourceType, setSourceType] = useState('github');
   const [form, setForm] = useState({
@@ -11,6 +14,7 @@ export default function NewServiceForm({ projectId, onCreated, onCancel }) {
     branch: 'main',
     localPath: '',
     rootDirectory: '',
+    serviceKind: 'auto',
     buildCommand: '',
     startCommand: '',
     port: '',
@@ -36,7 +40,7 @@ export default function NewServiceForm({ projectId, onCreated, onCancel }) {
     }
     try {
       const { service } = await api.createService({
-        projectId, sourceType, ...form, name, pm2Name: name,
+        projectId, sourceType, ...form, name,
       });
       onCreated(service);
     } catch (err) { setError(err.message); }
@@ -79,7 +83,6 @@ export default function NewServiceForm({ projectId, onCreated, onCancel }) {
             <Field label="Branch" value={form.branch} onChange={(v) => set('branch', v)} placeholder="main" />
             <Field label="Root directory" value={form.rootDirectory} onChange={(v) => set('rootDirectory', v)} placeholder="(optional) server" />
           </div>
-          <Field label="Deploy to (VPS path)" value={form.localPath} onChange={(v) => set('localPath', v)} placeholder="/var/www/myapp" />
         </>
       ) : (
         <Field label="Folder path on VPS" value={form.localPath} onChange={(v) => set('localPath', v)} placeholder="/var/www/myapp" autoFocus />
@@ -87,10 +90,29 @@ export default function NewServiceForm({ projectId, onCreated, onCancel }) {
 
       <div className="grid grid-cols-2 gap-3">
         <Field label="Service name" value={form.name} onChange={(v) => set('name', v)} placeholder="auto from source" />
-        <Field label="Port" value={form.port} onChange={(v) => set('port', v)} placeholder="3000" />
+        <div>
+          <label className="block text-xs text-gray-400 mb-1.5">Service type</label>
+          <select className="input" value={form.serviceKind} onChange={(e) => set('serviceKind', e.target.value)}>
+            <option value="auto">Auto-detect</option>
+            <option value="backend">Backend (pm2 process)</option>
+            <option value="static">Static site (React/Vite build)</option>
+          </select>
+        </div>
       </div>
-      <Field label="Build command" value={form.buildCommand} onChange={(v) => set('buildCommand', v)} placeholder="npm ci && npm run build" mono />
-      <Field label="Start command" value={form.startCommand} onChange={(v) => set('startCommand', v)} placeholder="npm start" mono />
+
+      {sourceType === 'github' && (
+        <p className="text-[11px] text-muted font-mono">
+          Deploys to /var/www/{slugify(projectName) || '<project>'}/
+          {slugify(form.name || form.repoUrl.match(/\/([^/.]+)(?:\.git)?$/)?.[1]) || '<service>'}
+        </p>
+      )}
+      <Field label="Build command" value={form.buildCommand} onChange={(v) => set('buildCommand', v)} placeholder="auto (e.g. npm install && npm run build)" mono />
+      {form.serviceKind !== 'static' && (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Start command" value={form.startCommand} onChange={(v) => set('startCommand', v)} placeholder="auto (e.g. npm start)" mono />
+          <Field label="Port" value={form.port} onChange={(v) => set('port', v)} placeholder="3000" />
+        </div>
+      )}
 
       {sourceType === 'github' && (
         <label className="flex items-center gap-2.5 text-sm text-gray-300">

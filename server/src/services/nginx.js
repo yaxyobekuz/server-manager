@@ -46,13 +46,35 @@ export function readSite(name) {
   return fs.readFileSync(p, 'utf8');
 }
 
+/**
+ * Server block for a static build (React/Vite/CRA): nginx serves the files
+ * itself — no proxy, no pm2. SPA routes fall back to index.html.
+ */
+export function buildStaticConfig({ domain, rootPath }) {
+  return `# Managed by server-manager
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+
+    root ${rootPath};
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+`;
+}
+
 /** Write the config, symlink it into sites-enabled, test, then reload. */
-export async function createSite({ domain, port, config: rawConfig }) {
+export async function createSite({ domain, port, rootPath, config: rawConfig }) {
   const name = path.basename(domain); // file named after the domain
   const available = path.join(SITES_AVAILABLE, name);
   const enabled = path.join(SITES_ENABLED, name);
 
-  const content = rawConfig || buildConfig({ domain, port });
+  const content =
+    rawConfig || (rootPath ? buildStaticConfig({ domain, rootPath }) : buildConfig({ domain, port }));
   fs.writeFileSync(available, content);
 
   if (!fs.existsSync(enabled)) {
@@ -85,6 +107,14 @@ export async function deleteSite(name) {
  * Issue/renew an HTTPS certificate with certbot's nginx plugin.
  * Certbot edits the matching nginx server block in place to add SSL.
  */
+/** Remove a domain's Let's Encrypt certificate (no-op if it never existed). */
+export async function deleteHttps(domain) {
+  const result = await run('certbot', ['delete', '--cert-name', domain, '--non-interactive'], {
+    timeout: 60000,
+  });
+  return { ok: result.code === 0, output: result.stdout + '\n' + result.stderr };
+}
+
 export async function enableHttps({ domain, email }) {
   const args = [
     '--nginx',

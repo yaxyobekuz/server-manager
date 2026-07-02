@@ -17,7 +17,13 @@ export default function ProjectCanvas() {
   useEffect(() => { load(); }, [id]);
 
   const deleteProject = async () => {
-    if (!confirm(`Delete project "${project.name}" and all its services?`)) return;
+    const warning =
+      `Delete project "${project.name}" and all its services?\n\n` +
+      `Each service will be torn down one by one:\n` +
+      `• pm2 processes\n` +
+      `• domains, nginx configs and SSL certificates\n` +
+      `• service folders and the project folder itself`;
+    if (!confirm(warning)) return;
     await api.deleteProject(id);
     navigate('/');
   };
@@ -74,6 +80,7 @@ export default function ProjectCanvas() {
       <Modal open={showNew} onClose={() => setShowNew(false)} title="Deploy a new service" wide>
         <NewServiceForm
           projectId={id}
+          projectName={project.name}
           onCreated={(svc) => { setShowNew(false); navigate(`/projects/${id}/services/${svc.id}`); }}
           onCancel={() => setShowNew(false)}
         />

@@ -47,6 +47,7 @@ export const api = {
   saveVariables: (id, variables) => request('PUT', `/services/${id}/variables`, { variables }),
   gitStatus: (id) => request('GET', `/services/${id}/git`),
   metrics: (id) => request('GET', `/services/${id}/metrics`),
+  metricsMonth: (id, month) => request('GET', `/services/${id}/metrics/history?month=${encodeURIComponent(month)}`),
   addDomain: (id, payload) => request('POST', `/services/${id}/domains`, payload),
   removeDomain: (id, host) => request('DELETE', `/services/${id}/domains/${encodeURIComponent(host)}`),
 

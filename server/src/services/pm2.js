@@ -75,7 +75,10 @@ async function action(args) {
 }
 
 export function restart(idOrName) {
-  return action(['restart', String(idOrName), '--update-env']);
+  // No --update-env: a generic restart must keep the env the process was
+  // originally started with. With it, pm2 would stamp *this panel's* env
+  // (its PORT, secrets) onto whatever process the user restarts.
+  return action(['restart', String(idOrName)]);
 }
 
 export function stop(idOrName) {
