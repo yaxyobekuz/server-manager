@@ -1,5 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { Icon } from './Icons.jsx';
+import logo from '../assets/logo.svg';
 
 const nav = [
   { to: '/', label: 'Projects', icon: Icon.grid, end: true },
@@ -15,9 +16,8 @@ export default function Shell({ children, onLogout }) {
           onClick={() => navigate('/')}
           className="flex items-center gap-2.5 px-5 h-14 border-b border-line text-left"
         >
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-brand to-brand-soft flex items-center justify-center text-white">
-            <Icon.logo width={16} height={16} />
-          </div>
+          <img src={logo} alt="Deploy logo" className="w-7 h-7 rounded-lg" />
+
           <span className="font-semibold text-white tracking-tight">Deploy</span>
         </button>
 

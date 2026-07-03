@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api, setToken } from '../api/client.js';
 import { Icon } from '../components/Icons.jsx';
+import logo from '../assets/logo.svg';
 
 export default function Login({ onLogin }) {
   const [password, setPassword] = useState('');
@@ -26,9 +27,7 @@ export default function Login({ onLogin }) {
     <div className="min-h-full flex items-center justify-center p-4 bg-grid-fade">
       <form onSubmit={submit} className="w-full max-w-sm card p-8">
         <div className="flex items-center gap-3 mb-1">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand to-brand-soft flex items-center justify-center text-white shadow-glow">
-            <Icon.logo />
-          </div>
+          <img src={logo} alt="Deploy logo" className="w-10 h-10 rounded-xl shadow-glow" />
           <div>
             <h1 className="text-lg font-semibold text-white">Deploy</h1>
             <p className="text-xs text-muted">VPS deployment manager</p>
