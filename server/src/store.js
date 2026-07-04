@@ -140,7 +140,15 @@ export function getServiceByRepo(fullName) {
 }
 
 // pm2 process name is always derived from the service name — never user-set.
-const pm2NameFor = (name) => String(name || 'service').trim().replace(/\s+/g, '-');
+// pm2 process names must be unique across the whole box, but service names
+// only need to be unique within their project ("server", "admin", ...), so
+// the process name is derived from both: <project-slug>-<service-slug>.
+const pm2NameFor = (db, service) => {
+  const project = db.projects.find((p) => p.id === service.projectId);
+  const proj = slugify(project?.name || 'project');
+  const svc = slugify(service.name || 'service');
+  return svc === proj || svc.startsWith(`${proj}-`) ? svc : `${proj}-${svc}`;
+};
 
 export function createService(projectId, input = {}) {
   const db = read();
@@ -162,7 +170,7 @@ export function createService(projectId, input = {}) {
     buildCommand: input.buildCommand || '',
     startCommand: input.startCommand || '',
     staticOutputDir: input.staticOutputDir || '', // build output for static kind
-    pm2Name: pm2NameFor(input.name),
+    pm2Name: '', // derived below once the row exists
     port: input.port || '',
     // deploy behaviour
     autoDeploy: Boolean(input.autoDeploy),
@@ -172,6 +180,7 @@ export function createService(projectId, input = {}) {
     variables: input.variables || {}, // { KEY: value }
     createdAt: now(),
   };
+  service.pm2Name = pm2NameFor(db, service);
   db.services.push(service);
   write(db);
   return service;
@@ -187,7 +196,7 @@ export function updateService(serviceId, patch) {
     'staticOutputDir', 'port', 'autoDeploy', 'domains', 'variables',
   ];
   for (const k of allowed) if (k in patch) s[k] = patch[k];
-  if ('name' in patch) s.pm2Name = pm2NameFor(s.name); // pm2 name follows the service name
+  if ('name' in patch) s.pm2Name = pm2NameFor(db, s); // pm2 name follows the service name
   s.updatedAt = now();
   write(db);
   return s;
@@ -261,3 +270,23 @@ export function supersedeActiveDeployments(serviceId, exceptId) {
   }
   write(db);
 }
+
+/* --------------------------------------------------------------- migration */
+// Rows created before pm2 names were project-scoped may carry colliding names
+// ("admin" in two projects). Recompute once at boot; no-op when already clean.
+(function normalizePm2Names() {
+  try {
+    const db = read();
+    let changed = false;
+    for (const s of db.services) {
+      const want = pm2NameFor(db, s);
+      if (s.pm2Name !== want) {
+        s.pm2Name = want;
+        changed = true;
+      }
+    }
+    if (changed) write(db);
+  } catch {
+    /* never block boot on a migration */
+  }
+})();

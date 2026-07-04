@@ -26,6 +26,8 @@ function shapeFromJlist(proc) {
     memory: monit.memory ?? 0, // bytes
     cwd: env.pm_cwd || '',
     script: env.pm_exec_path || '',
+    errLogPath: env.pm_err_log_path || '',
+    outLogPath: env.pm_out_log_path || '',
   };
 }
 

@@ -22,6 +22,12 @@ export const Icon = {
       <path {...s} d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3" />
     </svg>
   ),
+  chart: (p) => (
+    <svg viewBox="0 0 24 24" width="18" height="18" {...p}>
+      <path {...s} d="M3 3v18h18" />
+      <path {...s} d="M6 15l4-5 3.5 3L18 7" />
+    </svg>
+  ),
   box: (p) => (
     <svg viewBox="0 0 24 24" width="18" height="18" {...p}>
       <path {...s} d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8M12 13v8" />

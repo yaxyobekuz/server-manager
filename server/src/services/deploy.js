@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { runStream } from './exec.js';
 import * as store from '../store.js';
+import { describe as pm2Describe } from './pm2.js';
 import { detectProject } from './detect.js';
 import { emitDeployLog, emitDeployStatus } from './bus.js';
 
@@ -47,7 +48,13 @@ function resolveRuntime(service, workdir, log) {
   let startCommand = service.startCommand || '';
   let outputDir = service.staticOutputDir || '';
 
-  const needsDetection = kind === 'auto' || (!buildCommand && !startCommand);
+  // Detect whenever ANY needed field is blank — a user who sets only the
+  // start command still expects the build step (npm install) to be inferred.
+  const needsDetection =
+    kind === 'auto' ||
+    !buildCommand ||
+    (kind !== 'static' && !startCommand) ||
+    (kind === 'static' && !outputDir);
   if (needsDetection && workdir && fs.existsSync(workdir)) {
     const d = detectProject(workdir);
     log(`==> Detected project type: ${d.kind} — ${d.reason}`);
@@ -77,6 +84,35 @@ function writeEnvFile(service, workdir, log) {
   } catch (e) {
     log(`==> Could not write .env: ${e.message}`, 'stderr');
   }
+}
+
+const STABILITY_WAIT_MS = 5000;
+
+/**
+ * A freshly (re)created process starts with restarts=0. If it is anything
+ * but `online` with 0 restarts after the wait, it is crash-looping — grab
+ * the tail of its error log so the deploy log shows WHY.
+ */
+async function checkStability(pm2Name, log) {
+  log('==> Verifying the process stays up…');
+  await new Promise((r) => setTimeout(r, STABILITY_WAIT_MS));
+  const proc = await pm2Describe(pm2Name);
+  const ok = !!proc && proc.status === 'online' && (proc.restarts ?? 0) === 0;
+  let errTail = [];
+  if (!ok && proc?.errLogPath) {
+    try {
+      errTail = fs.readFileSync(proc.errLogPath, 'utf8').trim().split('\n').slice(-15);
+    } catch {
+      /* log file may not exist yet */
+    }
+  }
+  return {
+    ok,
+    status: proc?.status || 'not found',
+    restarts: proc?.restarts ?? 0,
+    pid: proc?.pid,
+    errTail,
+  };
 }
 
 export async function runDeployment(service, deployment, { trigger } = {}) {
@@ -167,28 +203,39 @@ export async function runDeployment(service, deployment, { trigger } = {}) {
   const startCmd = (runtime.startCommand || '').trim();
 
   if (startCmd) {
-    // Is the process already known to pm2? Restart it; otherwise start fresh.
+    // pm2 `restart` re-runs whatever command the process was FIRST started
+    // with — a changed start command or cwd in Settings would silently never
+    // apply. Recreate the process instead so every deploy runs the current
+    // settings against the current checkout.
     const desc = await runStream('pm2', ['describe', pm2Name], {}, () => {});
     if (desc === 0) {
-      log(`==> Restarting pm2 process: ${pm2Name}`);
-      // --update-env re-snapshots env from this (sanitized) client env.
-      const code = await runStream(
-        'pm2', ['restart', pm2Name, '--update-env'],
-        { replaceEnv: serviceEnv(service) },
-        onLine
-      );
-      if (code !== 0) return setStatus('failed');
+      log(`==> Replacing pm2 process: ${pm2Name}`);
+      await runStream('pm2', ['delete', pm2Name], {}, () => {});
     } else {
       log(`==> Starting pm2 process: ${pm2Name}`);
-      // `pm2 start "cmd" --name x` runs an arbitrary start command.
-      const code = await runStream(
-        'pm2',
-        ['start', startCmd, '--name', pm2Name],
-        { cwd: workdir, shell: false, replaceEnv: serviceEnv(service) },
-        onLine
-      );
-      if (code !== 0) return setStatus('failed');
     }
+    const code = await runStream(
+      'pm2',
+      ['start', startCmd, '--name', pm2Name],
+      { cwd: workdir, shell: false, replaceEnv: serviceEnv(service) },
+      onLine
+    );
+    if (code !== 0) return setStatus('failed');
+    await runStream('pm2', ['save'], {}, () => {});
+
+    // pm2 start "succeeds" even when the app dies instantly — verify the
+    // process actually stays up, and surface its crash output in THIS log
+    // instead of burying it in pm2's log files.
+    const health = await checkStability(pm2Name, log);
+    if (!health.ok) {
+      log(`Process did not stay up (status: ${health.status}, restarts: ${health.restarts}).`, 'stderr');
+      if (health.errTail.length) {
+        log('==> Last lines of the process error log:', 'stderr');
+        for (const line of health.errTail) log(line, 'stderr');
+      }
+      return setStatus('failed');
+    }
+    log(`==> Process online (pid ${health.pid}, 0 restarts after ${STABILITY_WAIT_MS / 1000}s)`);
   } else if (pm2Name) {
     log(`==> Restarting pm2 process: ${pm2Name}`);
     await runStream(

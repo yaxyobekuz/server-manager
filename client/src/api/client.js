@@ -48,11 +48,18 @@ export const api = {
   gitStatus: (id) => request('GET', `/services/${id}/git`),
   metrics: (id) => request('GET', `/services/${id}/metrics`),
   metricsMonth: (id, month) => request('GET', `/services/${id}/metrics/history?month=${encodeURIComponent(month)}`),
+  traffic: (id) => request('GET', `/services/${id}/traffic`),
+  trafficMonth: (id, month) => request('GET', `/services/${id}/traffic/history?month=${encodeURIComponent(month)}`),
   addDomain: (id, payload) => request('POST', `/services/${id}/domains`, payload),
   removeDomain: (id, host) => request('DELETE', `/services/${id}/domains/${encodeURIComponent(host)}`),
+  domainStatus: (id) => request('GET', `/services/${id}/domains/status`),
+  repairDomain: (id, host) => request('POST', `/services/${id}/domains/${encodeURIComponent(host)}/repair`),
 
   // System
   systemStats: () => request('GET', '/system/stats'),
+  systemOverview: () => request('GET', '/system/overview'),
+  systemHistory: (month) => request('GET', `/system/history?month=${encodeURIComponent(month)}`),
+  systemStorage: () => request('GET', '/system/storage'),
   processes: () => request('GET', '/system/processes'),
   processAction: (id, action) => request('POST', `/system/processes/${id}/${action}`),
 };

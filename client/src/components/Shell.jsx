@@ -4,6 +4,7 @@ import logo from '../assets/logo.svg';
 
 const nav = [
   { to: '/', label: 'Projects', icon: Icon.grid, end: true },
+  { to: '/statistics', label: 'Statistics', icon: Icon.chart },
   { to: '/processes', label: 'Processes', icon: Icon.cpu },
 ];
 

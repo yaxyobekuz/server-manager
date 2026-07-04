@@ -11,6 +11,7 @@ import { login, requireAuth, verifyToken } from './auth.js';
 import { bus } from './services/bus.js';
 import { streamLogs } from './services/logs.js';
 import * as metrics from './services/metrics.js';
+import * as traffic from './services/traffic.js';
 
 import projectRoutes from './routes/projects.js';
 import serviceRoutes from './routes/services.js';
@@ -67,6 +68,16 @@ const server = http.createServer(app);
 setInterval(() => {
   metrics.sampleOnce().catch(() => {});
 }, 2000);
+
+// --- Traffic collector: tail per-domain nginx logs every 60s --------------
+setTimeout(() => traffic.collectTick(), 3000); // establish offsets early
+setInterval(() => {
+  try {
+    traffic.collectTick();
+  } catch {
+    /* one bad tick must not stop collection */
+  }
+}, 60000);
 
 // --- WebSocket ------------------------------------------------------------
 const wss = new WebSocketServer({ server, path: '/ws' });

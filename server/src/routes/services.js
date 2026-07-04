@@ -8,6 +8,7 @@ import * as metrics from '../services/metrics.js';
 import { startDeployment } from '../services/deploy.js';
 import { teardownService } from '../services/teardown.js';
 import * as pm2 from '../services/pm2.js';
+import * as traffic from '../services/traffic.js';
 
 const router = Router();
 
@@ -54,10 +55,16 @@ router.get('/:id', (req, res) => {
 });
 
 router.patch('/:id', (req, res) => {
+  const before = store.getService(req.params.id);
+  if (!before) return res.status(404).json({ error: 'Service not found' });
   const patch = { ...req.body };
   if (patch.repoUrl && !patch.repoFullName) patch.repoFullName = parseRepoFullName(patch.repoUrl);
   const service = store.updateService(req.params.id, patch);
-  if (!service) return res.status(404).json({ error: 'Service not found' });
+  // A rename re-derives the pm2 name; the old-named process would linger (and
+  // keep the port) forever, so drop it — the next deploy starts the new name.
+  if (before.pm2Name && service.pm2Name !== before.pm2Name) {
+    pm2.deleteProc(before.pm2Name).catch(() => {});
+  }
   res.json({ service });
 });
 
@@ -150,6 +157,33 @@ router.get('/:id/metrics/history', (req, res) => {
   res.json(data);
 });
 
+/* --------------------------------------------------------------- traffic */
+// HTTP traffic through the service's domains (nginx access logs): live
+// per-minute window, top paths this hour, and a health probe per domain.
+// This is the metrics source for static sites — works for backends too.
+router.get('/:id/traffic', async (req, res) => {
+  const service = store.getService(req.params.id);
+  if (!service) return res.status(404).json({ error: 'Service not found' });
+  const hosts = (service.domains || []).map((d) => d.host);
+  res.json({
+    hosts,
+    ...traffic.getLive(hosts),
+    probes: await traffic.probeAll(service.domains),
+    months: metrics.listMonths(),
+    serviceDisk: { path: service.localPath || '', used: await metrics.dirSize(service.localPath) },
+  });
+});
+
+// Persisted hourly traffic for one month, summed across the service's domains.
+router.get('/:id/traffic/history', (req, res) => {
+  const service = store.getService(req.params.id);
+  if (!service) return res.status(404).json({ error: 'Service not found' });
+  const hosts = (service.domains || []).map((d) => d.host);
+  const points = metrics.getMonthDomains(String(req.query.month || ''), hosts);
+  if (points === null) return res.status(400).json({ error: 'month must be YYYY-MM' });
+  res.json({ points });
+});
+
 /* --------------------------------------------------------------- domains */
 // Generate nginx config + (optionally) certbot HTTPS for a service domain.
 // Backend services get a reverse proxy to their port; static services get
@@ -188,6 +222,8 @@ router.post('/:id/domains', async (req, res) => {
     const created = await nginx.createSite(siteOpts);
     if (!created.ok) return res.status(400).json(created);
 
+    // entry.https stays the *wish* even when certbot fails — the status
+    // endpoint reports reality and Repair enforces the wish later.
     let httpsResult = null;
     if (https) httpsResult = await nginx.enableHttps({ domain: host, email });
 
@@ -197,6 +233,63 @@ router.post('/:id/domains', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// What nginx actually has per attached domain — lets the UI flag a domain
+// whose HTTPS silently failed (entry says https, config has no 443 block).
+router.get('/:id/domains/status', (req, res) => {
+  const service = store.getService(req.params.id);
+  if (!service) return res.status(404).json({ error: 'Service not found' });
+  res.json({
+    statuses: (service.domains || []).map((d) => ({
+      host: d.host,
+      https: Boolean(d.https),
+      ...nginx.siteStatus(d.host),
+    })),
+  });
+});
+
+// One-click repair: rewrite the nginx config from the stored entry, put SSL
+// back (reusing the existing certificate when there is one), reload and
+// probe. Covers "folder deleted and redeployed", lost 443 blocks and missing
+// symlinks without detaching the domain.
+router.post('/:id/domains/:host/repair', async (req, res) => {
+  const service = store.getService(req.params.id);
+  if (!service) return res.status(404).json({ error: 'Service not found' });
+  const entry = (service.domains || []).find((d) => d.host === req.params.host);
+  if (!entry) return res.status(404).json({ error: 'Domain not found' });
+
+  let siteOpts;
+  if (entry.root) {
+    if (!fs.existsSync(path.join(entry.root, 'index.html'))) {
+      return res.status(400).json({ error: `No build output at ${entry.root} — deploy the service first.` });
+    }
+    siteOpts = { domain: entry.host, rootPath: entry.root };
+  } else {
+    const port = Number(entry.port || service.port);
+    if (!port) return res.status(400).json({ error: 'No port on this domain or service — set it in Settings.' });
+    siteOpts = { domain: entry.host, port };
+  }
+
+  const steps = [];
+  const created = await nginx.createSite(siteOpts);
+  steps.push({ step: 'nginx config', ok: created.ok, output: created.ok ? '' : `${created.step}: ${created.output}` });
+  if (!created.ok) return res.json({ ok: false, steps });
+
+  if (entry.https) {
+    const httpsResult = await nginx.enableHttps({ domain: entry.host, email: req.body?.email });
+    steps.push({
+      step: httpsResult.reusedCert ? 'https (existing certificate)' : 'https (certbot)',
+      ok: httpsResult.ok,
+      output: httpsResult.ok ? '' : httpsResult.output.trim().split('\n').slice(-6).join('\n'),
+    });
+  }
+
+  const probe = await traffic.probe(entry);
+  const probeOk = probe.code >= 200 && probe.code < 500; // 4xx = app answered
+  steps.push({ step: 'probe', ok: probeOk, output: probe.code ? `HTTP ${probe.code}` : probe.error || 'no response' });
+
+  res.json({ ok: steps.every((s) => s.ok), steps });
 });
 
 router.delete('/:id/domains/:host', async (req, res) => {

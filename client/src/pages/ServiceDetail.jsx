@@ -6,6 +6,7 @@ import { DEPLOY_STATUS } from '../lib/format.js';
 import DeploymentsTab from '../components/tabs/DeploymentsTab.jsx';
 import VariablesTab from '../components/tabs/VariablesTab.jsx';
 import MetricsTab from '../components/tabs/MetricsTab.jsx';
+import StaticMetricsTab from '../components/tabs/StaticMetricsTab.jsx';
 import DomainsTab from '../components/tabs/DomainsTab.jsx';
 import LogsTab from '../components/tabs/LogsTab.jsx';
 import SettingsTab from '../components/tabs/SettingsTab.jsx';
@@ -43,9 +44,10 @@ export default function ServiceDetail() {
   if (!service) return <div className="p-8 text-muted">Loading…</div>;
   const st = DEPLOY_STATUS[service.latestDeployment?.status] || DEPLOY_STATUS.none;
   const SourceIcon = service.sourceType === 'github' ? Icon.github : Icon.box;
-  // Static sites have no pm2 process — metrics and runtime logs don't apply.
+  // Static sites have no pm2 process: runtime logs don't apply, and their
+  // Metrics tab shows HTTP traffic (nginx) instead of CPU/RAM.
   const isStatic = service.serviceKind === 'static';
-  const tabs = isStatic ? TABS.filter((t) => !['metrics', 'logs'].includes(t.key)) : TABS;
+  const tabs = isStatic ? TABS.filter((t) => t.key !== 'logs') : TABS;
   const activeTab = tabs.some((t) => t.key === tab) ? tab : 'deployments';
 
   return (
@@ -98,7 +100,7 @@ export default function ServiceDetail() {
       <div className="flex-1 p-8 bg-grid-fade">
         {activeTab === 'deployments' && <DeploymentsTab service={service} onDeployed={load} />}
         {activeTab === 'variables' && <VariablesTab serviceId={service.id} />}
-        {activeTab === 'metrics' && <MetricsTab service={service} />}
+        {activeTab === 'metrics' && (isStatic ? <StaticMetricsTab service={service} /> : <MetricsTab service={service} />)}
         {activeTab === 'logs' && <LogsTab service={service} />}
         {activeTab === 'domains' && <DomainsTab service={service} onChange={setService} />}
         {activeTab === 'settings' && <SettingsTab service={service} onChange={setService} onDeleted={() => navigate(`/projects/${id}`)} />}
