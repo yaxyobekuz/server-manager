@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { Icon } from '../components/Icons.jsx';
 import { DEPLOY_STATUS } from '../lib/format.js';
@@ -9,6 +9,7 @@ import MetricsTab from '../components/tabs/MetricsTab.jsx';
 import StaticMetricsTab from '../components/tabs/StaticMetricsTab.jsx';
 import DomainsTab from '../components/tabs/DomainsTab.jsx';
 import LogsTab from '../components/tabs/LogsTab.jsx';
+import TerminalTab from '../components/tabs/TerminalTab.jsx';
 import SettingsTab from '../components/tabs/SettingsTab.jsx';
 
 const TABS = [
@@ -21,20 +22,28 @@ const TABS = [
 ];
 
 export default function ServiceDetail() {
-  const { id, serviceId } = useParams();
+  // The active tab lives in the URL (/projects/:id/services/:serviceId/:tab)
+  // so every tab is its own page: refresh, back/forward and direct links work.
+  const { id, serviceId, tab: tabParam } = useParams();
   const navigate = useNavigate();
   const [service, setService] = useState(null);
-  const [tab, setTab] = useState('deployments');
+  const [projectName, setProjectName] = useState('');
   const [deploying, setDeploying] = useState(false);
 
-  const load = () => api.service(serviceId).then((d) => setService(d.service)).catch(() => {});
+  const tabPath = (key) => `/projects/${id}/services/${serviceId}/${key}`;
+
+  const load = () =>
+    api.service(serviceId).then((d) => {
+      setService(d.service);
+      if (d.projectName) setProjectName(d.projectName);
+    }).catch(() => {});
   useEffect(() => { load(); }, [serviceId]);
 
   const deploy = async () => {
     setDeploying(true);
     try {
       await api.deploy(serviceId, 'manual');
-      setTab('deployments');
+      navigate(tabPath('deployments'));
       setTimeout(load, 500);
     } finally {
       setTimeout(() => setDeploying(false), 800);
@@ -48,7 +57,10 @@ export default function ServiceDetail() {
   // Metrics tab shows HTTP traffic (nginx) instead of CPU/RAM.
   const isStatic = service.serviceKind === 'static';
   const tabs = isStatic ? TABS.filter((t) => t.key !== 'logs') : TABS;
-  const activeTab = tabs.some((t) => t.key === tab) ? tab : 'deployments';
+  // 'terminal' is not in the tab bar — it opens via the header button;
+  // picking any tab closes it. Unknown URL segments fall back to deployments.
+  const requested = tabParam || 'deployments';
+  const activeTab = requested === 'terminal' || tabs.some((t) => t.key === requested) ? requested : 'deployments';
 
   return (
     <div className="min-h-full flex flex-col">
@@ -56,7 +68,9 @@ export default function ServiceDetail() {
         <div className="flex items-center gap-2 text-sm mb-3">
           <button onClick={() => navigate('/')} className="text-muted hover:text-white">Projects</button>
           <span className="text-line">/</span>
-          <button onClick={() => navigate(`/projects/${id}`)} className="text-muted hover:text-white">Project</button>
+          <button onClick={() => navigate(`/projects/${id}`)} className="text-muted hover:text-white truncate max-w-[200px]">
+            {projectName || 'Project'}
+          </button>
           <span className="text-line">/</span>
           <span className="text-white">{service.name}</span>
         </div>
@@ -77,22 +91,31 @@ export default function ServiceDetail() {
               </div>
             </div>
           </div>
-          <button onClick={deploy} disabled={deploying} className="btn-brand">
-            <Icon.rocket width={15} height={15} /> {deploying ? 'Deploying…' : 'Deploy'}
-          </button>
+          <div className="flex items-center gap-2">
+            <Link
+              to={tabPath('terminal')}
+              className={`btn-ghost ${activeTab === 'terminal' ? '!border-brand !text-white' : ''}`}
+              title="Open a shell in this service's folder"
+            >
+              <Icon.terminal width={15} height={15} /> Terminal
+            </Link>
+            <button onClick={deploy} disabled={deploying} className="btn-brand">
+              <Icon.rocket width={15} height={15} /> {deploying ? 'Deploying…' : 'Deploy'}
+            </button>
+          </div>
         </div>
 
         <nav className="flex gap-1 -mb-px">
           {tabs.map(({ key, label, icon: I }) => (
-            <button
+            <Link
               key={key}
-              onClick={() => setTab(key)}
+              to={tabPath(key)}
               className={`flex items-center gap-2 px-3.5 py-2.5 text-sm border-b-2 transition ${
                 activeTab === key ? 'border-brand text-white' : 'border-transparent text-muted hover:text-gray-200'
               }`}
             >
               <I width={15} height={15} /> {label}
-            </button>
+            </Link>
           ))}
         </nav>
       </header>
@@ -102,6 +125,7 @@ export default function ServiceDetail() {
         {activeTab === 'variables' && <VariablesTab serviceId={service.id} />}
         {activeTab === 'metrics' && (isStatic ? <StaticMetricsTab service={service} /> : <MetricsTab service={service} />)}
         {activeTab === 'logs' && <LogsTab service={service} />}
+        {activeTab === 'terminal' && <TerminalTab service={service} />}
         {activeTab === 'domains' && <DomainsTab service={service} onChange={setService} />}
         {activeTab === 'settings' && <SettingsTab service={service} onChange={setService} onDeleted={() => navigate(`/projects/${id}`)} />}
       </div>

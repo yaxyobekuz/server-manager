@@ -51,13 +51,19 @@ router.post('/', (req, res) => {
 router.get('/:id', (req, res) => {
   const service = store.getService(req.params.id);
   if (!service) return res.status(404).json({ error: 'Service not found' });
-  res.json({ service });
+  // projectName rides along for the breadcrumb — saves the client a request.
+  res.json({ service, projectName: store.getProject(service.projectId)?.name || '' });
 });
 
 router.patch('/:id', (req, res) => {
   const before = store.getService(req.params.id);
   if (!before) return res.status(404).json({ error: 'Service not found' });
   const patch = { ...req.body };
+  // variables and domains have their own endpoints — a Settings save built
+  // from a stale full-service snapshot must never clobber what was saved in
+  // another tab meanwhile (save Variables → save Settings → old vars back).
+  delete patch.variables;
+  delete patch.domains;
   if (patch.repoUrl && !patch.repoFullName) patch.repoFullName = parseRepoFullName(patch.repoUrl);
   const service = store.updateService(req.params.id, patch);
   // A rename re-derives the pm2 name; the old-named process would linger (and

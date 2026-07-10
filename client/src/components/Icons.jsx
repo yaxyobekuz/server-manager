@@ -111,6 +111,31 @@ export const Icon = {
       <path {...s} d="M20 6L9 17l-5-5" />
     </svg>
   ),
+  terminal: (p) => (
+    <svg viewBox="0 0 24 24" width="18" height="18" {...p}>
+      <rect x="2" y="4" width="20" height="16" rx="2" {...s} />
+      <path {...s} d="M6.5 9.5l3.5 2.5-3.5 2.5M12.5 15h5" />
+    </svg>
+  ),
+  search: (p) => (
+    <svg viewBox="0 0 24 24" width="15" height="15" {...p}>
+      <circle cx="11" cy="11" r="7" {...s} />
+      <path {...s} d="M21 21l-4.35-4.35" />
+    </svg>
+  ),
+  dots: (p) => (
+    <svg viewBox="0 0 24 24" width="16" height="16" {...p}>
+      <circle cx="12" cy="5" r="1.7" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="19" r="1.7" fill="currentColor" stroke="none" />
+    </svg>
+  ),
+  copy: (p) => (
+    <svg viewBox="0 0 24 24" width="15" height="15" {...p}>
+      <rect x="9" y="9" width="12" height="12" rx="2" {...s} />
+      <path {...s} d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  ),
 };
 
 export function StatusDot({ className = '', pulse = false }) {

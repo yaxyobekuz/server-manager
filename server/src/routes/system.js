@@ -5,6 +5,7 @@ import { Router } from 'express';
 import * as metrics from '../services/metrics.js';
 import * as pm2 from '../services/pm2.js';
 import * as store from '../store.js';
+import * as traffic from '../services/traffic.js';
 import { run } from '../services/exec.js';
 import { config } from '../config.js';
 
@@ -59,6 +60,104 @@ router.get('/overview', async (req, res) => {
     window: metrics.getSystemWindow(),
     months: metrics.listMonths(),
   });
+});
+
+/**
+ * Comparative usage per project — "which project eats the most".
+ * Live (no ?month): current pm2 CPU/RAM sums + last-60-min domain traffic.
+ * ?month=YYYY-MM: hourly per-hour sums across the project's processes
+ * (avg + peak) and the month's domain traffic totals.
+ * Disk is always the current du of the project's service folders.
+ */
+router.get('/projects', async (req, res) => {
+  const month = String(req.query.month || '');
+  const isMonth = /^\d{4}-\d{2}$/.test(month);
+  const projects = store.listProjects();
+
+  let pm2ByName = new Map();
+  if (!isMonth) {
+    try {
+      pm2ByName = new Map((await pm2.list()).map((p) => [p.name, p]));
+    } catch {
+      /* pm2 down — CPU/RAM just read 0 */
+    }
+  }
+  const monthData = isMonth ? metrics.getMonthAll(month) : null;
+
+  const rows = await Promise.all(
+    projects.map(async (p) => {
+      const services = p.services || [];
+      const names = services.map((s) => s.pm2Name || s.name);
+      const hosts = services.flatMap((s) => (s.domains || []).map((d) => d.host));
+
+      let cpu = 0, cpuMax = 0, mem = 0, memMax = 0, online = 0;
+      if (isMonth) {
+        // Sum the project's processes per hour, then average/peak over hours —
+        // summing each service's own avg/max would overstate the peak.
+        const byHour = new Map();
+        for (const n of names) {
+          for (const pt of monthData.procs[n] || []) {
+            const a = byHour.get(pt.t) || { cpu: 0, mem: 0 };
+            a.cpu += pt.cpu || 0;
+            a.mem += pt.mem || 0;
+            byHour.set(pt.t, a);
+          }
+        }
+        const sums = [...byHour.values()];
+        if (sums.length) {
+          cpu = sums.reduce((a, x) => a + x.cpu, 0) / sums.length;
+          mem = sums.reduce((a, x) => a + x.mem, 0) / sums.length;
+          cpuMax = Math.max(...sums.map((x) => x.cpu));
+          memMax = Math.max(...sums.map((x) => x.mem));
+        }
+      } else {
+        for (const n of names) {
+          const proc = pm2ByName.get(n);
+          if (!proc) continue;
+          cpu += proc.cpu || 0;
+          mem += proc.memory || 0;
+          if (proc.status === 'online') online++;
+        }
+        cpuMax = cpu;
+        memMax = mem;
+      }
+
+      let reqs = 0, bytes = 0;
+      if (isMonth) {
+        for (const h of hosts) {
+          for (const pt of monthData.domains[h] || []) {
+            reqs += pt.req || 0;
+            bytes += pt.bytes || 0;
+          }
+        }
+      } else if (hosts.length) {
+        for (const pt of traffic.getLive(hosts).points) {
+          reqs += pt.req || 0;
+          bytes += pt.bytes || 0;
+        }
+      }
+
+      const disks = await Promise.all(services.map((s) => metrics.dirSize(s.localPath)));
+
+      return {
+        id: p.id,
+        name: p.name,
+        services: services.length,
+        domains: hosts.length,
+        online,
+        cpu: +cpu.toFixed(1),
+        cpuMax: +cpuMax.toFixed(1),
+        mem: Math.round(mem),
+        memMax: Math.round(memMax),
+        disk: disks.reduce((a, b) => a + b, 0),
+        req: reqs,
+        bytes,
+      };
+    })
+  );
+
+  rows.sort((a, b) => b.mem - a.mem);
+  res.json({ period: isMonth ? month : 'live', projects: rows });
 });
 
 /** System-wide hourly history for one month. */

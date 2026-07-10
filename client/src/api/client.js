@@ -33,6 +33,7 @@ export const api = {
   project: (id) => request('GET', `/projects/${id}`),
   createProject: (p) => request('POST', '/projects', p),
   updateProject: (id, p) => request('PATCH', `/projects/${id}`, p),
+  copyProject: (id, payload) => request('POST', `/projects/${id}/copy`, payload),
   deleteProject: (id) => request('DELETE', `/projects/${id}`),
 
   // Services
@@ -59,6 +60,8 @@ export const api = {
   systemStats: () => request('GET', '/system/stats'),
   systemOverview: () => request('GET', '/system/overview'),
   systemHistory: (month) => request('GET', `/system/history?month=${encodeURIComponent(month)}`),
+  systemProjects: (month) =>
+    request('GET', `/system/projects${month && month !== 'live' ? `?month=${encodeURIComponent(month)}` : ''}`),
   systemStorage: () => request('GET', '/system/storage'),
   processes: () => request('GET', '/system/processes'),
   processAction: (id, action) => request('POST', `/system/processes/${id}/${action}`),

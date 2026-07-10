@@ -2,8 +2,18 @@ import { useState } from 'react';
 import { api } from '../../api/client.js';
 import { Icon } from '../Icons.jsx';
 
+// Only the fields this tab actually edits. Snapshotting the WHOLE service
+// here and PATCHing it back used to silently revert variables/domains saved
+// in other tabs after this one was mounted.
+const EDITABLE = [
+  'name', 'repoUrl', 'branch', 'rootDirectory', 'localPath',
+  'serviceKind', 'buildCommand', 'startCommand', 'staticOutputDir',
+  'port', 'autoDeploy',
+];
+const pickEditable = (service) => Object.fromEntries(EDITABLE.map((k) => [k, service[k] ?? '']));
+
 export default function SettingsTab({ service, onChange, onDeleted }) {
-  const [form, setForm] = useState({ ...service });
+  const [form, setForm] = useState(pickEditable(service));
   const [saved, setSaved] = useState(false);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 

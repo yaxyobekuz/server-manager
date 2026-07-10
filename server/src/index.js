@@ -12,6 +12,9 @@ import { bus } from './services/bus.js';
 import { streamLogs } from './services/logs.js';
 import * as metrics from './services/metrics.js';
 import * as traffic from './services/traffic.js';
+import * as store from './store.js';
+import { serviceEnv } from './services/deploy.js';
+import { openTerminal } from './services/terminal.js';
 
 import projectRoutes from './routes/projects.js';
 import serviceRoutes from './routes/services.js';
@@ -91,6 +94,7 @@ wss.on('connection', (ws, req) => {
 
   let logChild = null;
   let metricsTimer = null;
+  let term = null;
 
   const send = (type, data) => {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type, ...data }));
@@ -136,10 +140,41 @@ wss.on('connection', (ws, req) => {
       clearInterval(metricsTimer);
       metricsTimer = null;
     }
+
+    // Interactive shell in the service's folder, with the service's env
+    // (same substitutions as a deploy — panel-only secrets stripped).
+    if (msg.action === 'term:start' && msg.serviceId) {
+      term?.kill();
+      term = null;
+      const service = store.getService(msg.serviceId);
+      const base = service?.localPath || '';
+      const withRoot = service?.rootDirectory ? path.join(base, service.rootDirectory) : base;
+      const dir = base && fs.existsSync(withRoot) ? withRoot : base && fs.existsSync(base) ? base : null;
+      if (!service || !dir) {
+        send('term:data', { data: 'No folder on the VPS for this service yet — deploy it first.\r\n' });
+        send('term:exit', {});
+      } else {
+        term = openTerminal(
+          { cwd: dir, env: serviceEnv(service), cols: msg.cols, rows: msg.rows },
+          (data) => send('term:data', { data }),
+          (code) => {
+            send('term:exit', { code });
+            term = null;
+          }
+        );
+      }
+    }
+    if (msg.action === 'term:input') term?.write(String(msg.data ?? ''));
+    if (msg.action === 'term:resize') term?.resize(msg.cols, msg.rows);
+    if (msg.action === 'term:stop') {
+      term?.kill();
+      term = null;
+    }
   });
 
   ws.on('close', () => {
     logChild?.kill();
+    term?.kill();
     clearInterval(metricsTimer);
     bus.off('deploy-log', onDeployLog);
     bus.off('deploy-status', onDeployStatus);

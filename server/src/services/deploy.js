@@ -30,7 +30,7 @@ function resolveWorkdir(service) {
 // app binds the panel's PORT instead of its own and crash-loops.
 const PANEL_ONLY_VARS = ['PORT', 'ADMIN_PASSWORD', 'JWT_SECRET', 'JWT_EXPIRES_IN', 'GITHUB_WEBHOOK_SECRET'];
 
-function serviceEnv(service) {
+export function serviceEnv(service) {
   const env = { ...process.env };
   for (const k of PANEL_ONLY_VARS) delete env[k];
   Object.assign(env, service.variables || {});

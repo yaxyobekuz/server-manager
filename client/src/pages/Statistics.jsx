@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { createSocket } from '../api/socket.js';
 import { Icon } from '../components/Icons.jsx';
@@ -48,7 +48,13 @@ export default function Statistics() {
   const [period, setPeriod] = useState('live');
   const [monthSys, setMonthSys] = useState(null); // hourly system points
   const [storage, setStorage] = useState(null);
+  const [projUsage, setProjUsage] = useState(null); // per-project comparison rows
   const seededRef = useRef(false);
+
+  // Tab lives in the URL: /statistics (server) | /statistics/projects.
+  const { tab: tabParam } = useParams();
+  const navigate = useNavigate();
+  const tab = tabParam === 'projects' ? 'projects' : 'server';
 
   // Overview snapshot (processes, months, counts) — refreshed every 30s.
   useEffect(() => {
@@ -110,6 +116,17 @@ export default function Statistics() {
     if (period === 'live') { setMonthSys(null); return; }
     api.systemHistory(period).then((d) => setMonthSys(d.system || [])).catch(() => setMonthSys([]));
   }, [period]);
+
+  // Per-project comparison — only while its tab is open; live refreshes every 30s.
+  useEffect(() => {
+    if (tab !== 'projects') return;
+    let alive = true;
+    setProjUsage(null);
+    const load = () => api.systemProjects(period).then((d) => alive && setProjUsage(d)).catch(() => {});
+    load();
+    const t = period === 'live' ? setInterval(load, 30000) : null;
+    return () => { alive = false; if (t) clearInterval(t); };
+  }, [tab, period]);
 
   const isLive = period === 'live';
   const sys = sysNow || ov?.system;
@@ -177,7 +194,13 @@ export default function Statistics() {
   return (
     <div className="min-h-full bg-grid-fade">
       <header className="flex items-center justify-between px-8 h-14 border-b border-line sticky top-0 bg-bg/80 backdrop-blur z-10">
-        <h1 className="text-[15px] font-semibold text-white">Server statistics</h1>
+        <div className="flex items-center gap-5 min-w-0">
+          <h1 className="text-[15px] font-semibold text-white shrink-0">Statistics</h1>
+          <nav className="flex items-center gap-1 bg-bg-input border border-line rounded-lg p-0.5">
+            <TabButton active={tab === 'server'} onClick={() => navigate('/statistics')}>Server</TabButton>
+            <TabButton active={tab === 'projects'} onClick={() => navigate('/statistics/projects')}>Projects</TabButton>
+          </nav>
+        </div>
         <span className="flex items-center gap-2 text-xs text-ok">
           <span className="w-2 h-2 rounded-full bg-ok animate-pulse-dot" /> Live
         </span>
@@ -202,6 +225,9 @@ export default function Statistics() {
           </aside>
 
           {/* -------------------------------------------------- main column */}
+          {tab === 'projects' ? (
+            <ProjectsUsage data={projUsage} isLive={isLive} periodLabel={periodLabel} />
+          ) : (
           <div className="space-y-5 min-w-0">
             {/* top bar */}
             <div className="card px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
@@ -369,9 +395,123 @@ export default function Statistics() {
             {/* storage breakdown */}
             <StorageCard storage={storage} disk={sys?.disk} />
           </div>
+          )}
         </div>
       </div>
     </div>
+  );
+}
+
+/* ------------------------------------------- per-project usage comparison */
+
+const fmtCount = (v) => {
+  const n = Math.round(+v || 0);
+  return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n);
+};
+
+/**
+ * "Which project eats the most" — one ranking card per resource, every
+ * project measured as the sum of its services (pm2 processes, service
+ * folders, domain traffic).
+ */
+function ProjectsUsage({ data, isLive, periodLabel }) {
+  if (!data) {
+    return (
+      <div className="card p-16 text-center text-sm text-muted">
+        Measuring project usage… (first run scans service folders)
+      </div>
+    );
+  }
+  const rows = data.projects || [];
+  if (!rows.length) return <div className="card p-16 text-center text-sm text-muted">No projects yet.</div>;
+
+  const totalServices = rows.reduce((a, r) => a + r.services, 0);
+  const cards = [
+    {
+      key: 'mem', title: 'RAM', icon: <Icon.box width={15} height={15} />, color: GREEN, fmt: formatBytes,
+      hint: isLive ? 'current, sum of processes' : 'hourly avg',
+      sub: (r) => (isLive ? `${r.online}/${r.services} process${r.services !== 1 ? 'es' : ''} online` : `peak ${formatBytes(r.memMax)}`),
+    },
+    {
+      key: 'cpu', title: 'CPU', icon: <Icon.cpu width={15} height={15} />, color: VIOLET, fmt: fmtCpu,
+      hint: isLive ? 'current, sum of processes' : 'hourly avg',
+      sub: (r) => (isLive ? null : `peak ${fmtCpu(r.cpuMax)}`),
+    },
+    {
+      key: 'disk', title: 'Disk', icon: <Icon.list width={15} height={15} />, color: VIOLET, fmt: formatBytes,
+      hint: 'service folders, current',
+      sub: (r) => `${r.services} service${r.services !== 1 ? 's' : ''}`,
+    },
+    {
+      key: 'bytes', title: 'Traffic out', icon: <Icon.globe width={15} height={15} />, color: GREEN, fmt: formatBytes,
+      hint: isLive ? 'domains, last 60 min' : 'domains, month total',
+      sub: (r) => (r.domains ? `${fmtCount(r.req)} requests` : 'no domains'),
+    },
+  ];
+
+  return (
+    <div className="space-y-5 min-w-0">
+      <div className="card px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
+        <span className="text-sm text-gray-300">
+          {rows.length} project{rows.length !== 1 ? 's' : ''} · {totalServices} services — resource usage compared per project
+        </span>
+        <span className="chip bg-bg-hover border-line text-gray-300 shrink-0">{periodLabel}</span>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+        {cards.map((c) => <RankCard key={c.key} card={c} rows={rows} />)}
+      </div>
+    </div>
+  );
+}
+
+function RankCard({ card, rows }) {
+  const sorted = [...rows].sort((a, b) => (b[card.key] || 0) - (a[card.key] || 0));
+  const max = sorted[0]?.[card.key] || 1;
+  return (
+    <div className="card p-5 min-w-0">
+      <div className="flex items-center justify-between mb-4">
+        <span className="text-sm text-gray-300 flex items-center gap-2">{card.icon} {card.title}</span>
+        <span className="text-[11px] text-muted">{card.hint}</span>
+      </div>
+      <div className="space-y-2.5">
+        {sorted.map((r) => {
+          const v = r[card.key] || 0;
+          const sub = card.sub(r);
+          return (
+            <div key={r.id} className={v ? '' : 'opacity-45'}>
+              <div className="flex items-center justify-between text-xs mb-1 gap-3">
+                <Link to={`/projects/${r.id}`} className="text-gray-300 hover:text-brand font-medium truncate transition">
+                  {r.name}
+                </Link>
+                <span className="text-muted font-mono shrink-0">
+                  {card.fmt(v)}{sub ? <span className="ml-2 text-[10px]">· {sub}</span> : null}
+                </span>
+              </div>
+              <div className="h-1.5 rounded-full bg-bg-input overflow-hidden">
+                <div
+                  className="h-full rounded-full"
+                  style={{ width: `${Math.max(v ? 2 : 0, (v / max) * 100)}%`, background: card.color, opacity: 0.75 }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TabButton({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-3 py-1 rounded-md text-xs transition ${
+        active ? 'bg-bg-hover text-white border border-line' : 'text-muted hover:text-gray-200 border border-transparent'
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 

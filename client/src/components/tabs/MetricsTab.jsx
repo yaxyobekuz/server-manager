@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api/client.js';
 import { createSocket } from '../../api/socket.js';
-import { formatBytes, formatRate, formatMonth, formatUptime, PM2_STATUS } from '../../lib/format.js';
+import { formatBytes, formatMonth, formatUptime, PM2_STATUS } from '../../lib/format.js';
 import { Icon } from '../Icons.jsx';
 import Chart from '../Chart.jsx';
 
@@ -26,15 +26,16 @@ export default function MetricsTab({ service }) {
   const [months, setMonths] = useState([]);
   const [live, setLive] = useState(null); // pm2 describe (status/uptime/restarts)
   const [history, setHistory] = useState([]); // live window [{t,cpu,memory}]
-  const [sysNow, setSysNow] = useState(null); // live system stats (disk/net/mem)
+  const [sysNow, setSysNow] = useState(null); // live system stats (disk/mem)
   const [serviceDisk, setServiceDisk] = useState(null); // { path, used }
-  const [netHist, setNetHist] = useState([]); // live window [{t,rx,tx}]
+  const [traffic, setTraffic] = useState(null); // this service's domain traffic (live window)
   const [monthData, setMonthData] = useState(null); // { points, system }
+  const [monthTraffic, setMonthTraffic] = useState(null); // hourly domain traffic
   const socketRef = useRef(null);
 
-  // Snapshot (live window, months, per-service disk) — refreshed every 60s.
+  // Snapshot (live window, months, per-service disk + traffic) — every 60s.
   useEffect(() => {
-    const loadSnapshot = () =>
+    const loadSnapshot = () => {
       api.metrics(service.id).then((d) => {
         setHistory(d.history || []);
         setLive((prev) => d.live || prev);
@@ -42,6 +43,8 @@ export default function MetricsTab({ service }) {
         setSysNow((prev) => d.system || prev);
         setServiceDisk(d.serviceDisk || null);
       });
+      api.traffic(service.id).then(setTraffic).catch(() => {});
+    };
     loadSnapshot();
     const timer = setInterval(loadSnapshot, 60000);
 
@@ -52,10 +55,7 @@ export default function MetricsTab({ service }) {
         setLive((prev) => ({ ...(prev || {}), cpu: mine.cpu, memory: mine.memory, status: prev?.status || 'online' }));
         setHistory((prev) => [...prev.slice(-59), { t: Date.now(), cpu: mine.cpu, memory: mine.memory }]);
       }
-      if (msg.system) {
-        setSysNow(msg.system);
-        setNetHist((prev) => [...prev.slice(-59), { t: Date.now(), rx: msg.system.net?.rxSec || 0, tx: msg.system.net?.txSec || 0 }]);
-      }
+      if (msg.system) setSysNow(msg.system);
     });
     socketRef.current = socket;
     socket.send({ action: 'metrics:start' });
@@ -66,10 +66,11 @@ export default function MetricsTab({ service }) {
     };
   }, [service.id]);
 
-  // Selected month's persisted hourly aggregates.
+  // Selected month's persisted hourly aggregates (process + domain traffic).
   useEffect(() => {
-    if (period === 'live') { setMonthData(null); return; }
+    if (period === 'live') { setMonthData(null); setMonthTraffic(null); return; }
     api.metricsMonth(service.id, period).then(setMonthData).catch(() => setMonthData({ points: [], system: [] }));
+    api.trafficMonth(service.id, period).then((d) => setMonthTraffic(d.points || [])).catch(() => setMonthTraffic([]));
   }, [service.id, period]);
 
   const isLive = period === 'live';
@@ -90,15 +91,15 @@ export default function MetricsTab({ service }) {
         { name: 'avg', color: '#3ecf8e', points: points.map((p) => ({ t: p.t, v: p.mem })) },
         { name: 'peak', color: '#2b9e6b', dash: true, points: points.map((p) => ({ t: p.t, v: p.memMax ?? p.mem })) },
       ];
-  const netSeries = isLive
-    ? [
-        { name: 'in', color: '#3ecf8e', points: netHist.map((p) => ({ t: p.t, v: p.rx })) },
-        { name: 'out', color: '#a26bff', points: netHist.map((p) => ({ t: p.t, v: p.tx })) },
-      ]
-    : [
-        { name: 'in (avg)', color: '#3ecf8e', points: sysPoints.map((p) => ({ t: p.t, v: p.rx || 0 })) },
-        { name: 'out (avg)', color: '#a26bff', points: sysPoints.map((p) => ({ t: p.t, v: p.tx || 0 })) },
-      ];
+  // Per-service traffic: what nginx served through THIS service's domains
+  // (requests + bytes out) — not the whole server's bandwidth.
+  const trafPts = (isLive ? traffic?.points : monthTraffic) || [];
+  const trafSeries = [
+    { name: 'sent', color: '#29ad72', points: trafPts.map((p) => ({ t: p.t, v: p.bytes || 0 })) },
+  ];
+  const hasDomains = (service.domains || []).length > 0;
+  const totalReq = trafPts.reduce((a, p) => a + (p.req || 0), 0);
+  const totalSent = trafPts.reduce((a, p) => a + (p.bytes || 0), 0);
 
   // ---- exact numbers ----
   const cpuVals = (isLive ? history.map((p) => p.cpu) : points.map((p) => p.cpu)) || [];
@@ -107,10 +108,6 @@ export default function MetricsTab({ service }) {
   const memPeak = isLive ? max0(memVals) : max0(points.map((p) => p.memMax ?? p.mem));
   const cpuNow = isLive ? live?.cpu ?? 0 : avg(cpuVals);
   const memNow = isLive ? live?.memory || 0 : avg(memVals);
-
-  // Month totals: each point is an hourly average rate -> bytes = rate * 3600.
-  const totalIn = sysPoints.reduce((a, p) => a + (p.rx || 0) * 3600, 0);
-  const totalOut = sysPoints.reduce((a, p) => a + (p.tx || 0) * 3600, 0);
 
   const sysDisk = isLive ? sysNow?.disk : last(sysPoints)?.disk || sysNow?.disk;
   const svcShare = sysDisk?.total && serviceDisk?.used ? (serviceDisk.used / sysDisk.total) * 100 : 0;
@@ -214,22 +211,24 @@ export default function MetricsTab({ service }) {
           </div>
 
           <ChartCard
-            title="Bandwidth (server)"
+            title="Traffic (this service's domains)"
             hint={
-              isLive ? (
+              hasDomains ? (
                 <span className="flex items-center gap-3">
-                  <Legend color="#3ecf8e" label={`in ${formatRate(sysNow?.net?.rxSec)}`} />
-                  <Legend color="#a26bff" label={`out ${formatRate(sysNow?.net?.txSec)}`} />
+                  <span>{isLive ? 'per minute, last hour' : 'per hour'}</span>
+                  <Legend color="#a26bff" label={`req ${totalReq}`} />
+                  <Legend color="#29ad72" label={`sent ${formatBytes(totalSent)}`} />
                 </span>
-              ) : (
-                <span className="flex items-center gap-3">
-                  <Legend color="#3ecf8e" label={`in total ${formatBytes(totalIn)}`} />
-                  <Legend color="#a26bff" label={`out total ${formatBytes(totalOut)}`} />
-                </span>
-              )
+              ) : null
             }
           >
-            <Chart series={netSeries} formatY={formatRate} formatT={fmtT} />
+            {hasDomains ? (
+              <Chart series={trafSeries} formatY={formatBytes} formatT={fmtT} />
+            ) : (
+              <div className="h-32 flex items-center justify-center text-xs text-muted text-center px-6">
+                No domains attached — attach a domain in the Domains tab to see this service's own traffic.
+              </div>
+            )}
           </ChartCard>
         </div>
       </div>

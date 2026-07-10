@@ -214,15 +214,25 @@ async function doSample() {
   if (bucketHour !== null && h !== bucketHour) flushBucket(true); // hour rolled over
   bucketHour = h;
 
+  // pm2's pidusage batch fails as a whole when any single entry has an
+  // invalid pid (e.g. an orphaned process stuck "online" with no pid) —
+  // every process then reports cpu 0 / memory 0. A live process can't
+  // occupy 0 bytes, so if every online process says 0 the sample is
+  // garbage: skip it instead of poisoning per-process history with zeros.
+  const online = procs.filter((p) => p.status === 'online');
+  const monitBroken = online.length > 0 && online.every((p) => (p.memory ?? 0) === 0);
+
   const seen = new Set();
   const points = procs.map((p) => {
     seen.add(p.name);
     const point = { name: p.name, cpu: p.cpu ?? 0, memory: p.memory ?? 0 };
-    const hist = HISTORY.get(p.name) || [];
-    hist.push({ t, cpu: point.cpu, memory: point.memory });
-    while (hist.length > MAX_POINTS) hist.shift();
-    HISTORY.set(p.name, hist);
-    accumulate(p.name, point.cpu, point.memory);
+    if (!monitBroken) {
+      const hist = HISTORY.get(p.name) || [];
+      hist.push({ t, cpu: point.cpu, memory: point.memory });
+      while (hist.length > MAX_POINTS) hist.shift();
+      HISTORY.set(p.name, hist);
+      accumulate(p.name, point.cpu, point.memory);
+    }
     return point;
   });
 
@@ -296,6 +306,16 @@ export function getMonthHistory(month, pm2Name) {
 export function getMonthSystem(month) {
   if (!/^\d{4}-\d{2}$/.test(month)) return null;
   return readMonth(month)?.system || [];
+}
+
+/**
+ * Whole month file in one read — for cross-service aggregation (the
+ * per-project comparison would otherwise re-read the file per service).
+ */
+export function getMonthAll(month) {
+  if (!/^\d{4}-\d{2}$/.test(month)) return null;
+  const data = readMonth(month) || {};
+  return { procs: data.procs || {}, system: data.system || [], domains: data.domains || {} };
 }
 
 /** Hourly traffic for a set of domains in a month, summed per hour. */

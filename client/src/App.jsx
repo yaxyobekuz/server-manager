@@ -18,8 +18,9 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Projects />} />
         <Route path="/projects/:id" element={<ProjectCanvas />} />
-        <Route path="/projects/:id/services/:serviceId" element={<ServiceDetail />} />
-        <Route path="/statistics" element={<Statistics />} />
+        {/* every service tab is its own page: /services/:serviceId/<tab> */}
+        <Route path="/projects/:id/services/:serviceId/:tab?" element={<ServiceDetail />} />
+        <Route path="/statistics/:tab?" element={<Statistics />} />
         <Route path="/processes" element={<Processes />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
