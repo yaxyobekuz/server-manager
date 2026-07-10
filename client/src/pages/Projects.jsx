@@ -210,16 +210,13 @@ export default function Projects() {
                 >
                   <div className="flex items-center justify-between mb-4">
                     <span className="font-semibold text-white group-hover:text-brand transition">{p.name}</span>
-                    <div className="flex items-center gap-0.5">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setMenuFor(menuFor === p.id ? null : p.id); }}
-                        className="p-1.5 -m-1.5 rounded-md text-muted hover:text-white hover:bg-bg-hover transition"
-                        title="Project actions"
-                      >
-                        <Icon.dots />
-                      </button>
-                      <Icon.chevron className="text-muted group-hover:text-brand transition" />
-                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setMenuFor(menuFor === p.id ? null : p.id); }}
+                      className="p-1.5 -m-1.5 rounded-md text-muted hover:text-white hover:bg-bg-hover transition"
+                      title="Project actions"
+                    >
+                      <Icon.dots />
+                    </button>
                   </div>
 
                   {menuFor === p.id && (

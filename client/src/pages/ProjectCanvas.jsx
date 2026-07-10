@@ -38,7 +38,7 @@ export default function ProjectCanvas() {
           <button onClick={() => navigate('/')} className="text-muted hover:text-white flex items-center gap-1">
             <Icon.back width={14} height={14} /> Projects
           </button>
-          <span className="text-line">/</span>
+          <span className="text-gray-300">/</span>
           <span className="text-white font-semibold">{project.name}</span>
         </div>
         <div className="flex items-center gap-2">

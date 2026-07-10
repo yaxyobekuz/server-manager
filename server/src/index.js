@@ -116,7 +116,8 @@ wss.on('connection', (ws, req) => {
 
     if (msg.action === 'logs:subscribe' && msg.pm2Name) {
       logChild?.kill();
-      logChild = streamLogs(msg.pm2Name, (line) => send('log', { pm2Name: msg.pm2Name, line }));
+      // event = { stream: 'out'|'err'|'sys', line }
+      logChild = streamLogs(msg.pm2Name, (e) => send('log', { pm2Name: msg.pm2Name, ...e }));
     }
     if (msg.action === 'logs:unsubscribe') {
       logChild?.kill();

@@ -67,11 +67,11 @@ export default function ServiceDetail() {
       <header className="px-8 pt-4 border-b border-line sticky top-0 bg-bg/90 backdrop-blur z-10">
         <div className="flex items-center gap-2 text-sm mb-3">
           <button onClick={() => navigate('/')} className="text-muted hover:text-white">Projects</button>
-          <span className="text-line">/</span>
+          <span className="text-gray-300">/</span>
           <button onClick={() => navigate(`/projects/${id}`)} className="text-muted hover:text-white truncate max-w-[200px]">
             {projectName || 'Project'}
           </button>
-          <span className="text-line">/</span>
+          <span className="text-gray-300">/</span>
           <span className="text-white">{service.name}</span>
         </div>
 
