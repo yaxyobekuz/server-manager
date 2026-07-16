@@ -34,12 +34,14 @@ export const api = {
   createProject: (p) => request('POST', '/projects', p),
   updateProject: (id, p) => request('PATCH', `/projects/${id}`, p),
   copyProject: (id, payload) => request('POST', `/projects/${id}/copy`, payload),
+  setProjectCreatedAt: (id, createdAt, note) => request('PUT', `/projects/${id}/created-at`, { createdAt, note }),
   deleteProject: (id) => request('DELETE', `/projects/${id}`),
 
   // Services
   service: (id) => request('GET', `/services/${id}`),
   createService: (s) => request('POST', '/services', s),
   updateService: (id, s) => request('PATCH', `/services/${id}`, s),
+  setServiceCreatedAt: (id, createdAt, note) => request('PUT', `/services/${id}/created-at`, { createdAt, note }),
   deleteService: (id) => request('DELETE', `/services/${id}`),
   deploy: (id, trigger) => request('POST', `/services/${id}/deploy`, { trigger }),
   deployments: (id) => request('GET', `/services/${id}/deployments`),

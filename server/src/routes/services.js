@@ -74,6 +74,14 @@ router.patch('/:id', (req, res) => {
   res.json({ service });
 });
 
+// Admin-editable creation date; every change lands in createdAtHistory.
+router.put('/:id/created-at', (req, res) => {
+  const { createdAt, note } = req.body || {};
+  const service = store.setServiceCreatedAt(req.params.id, createdAt, note);
+  if (!service) return res.status(400).json({ error: 'Service not found or createdAt is not a valid date' });
+  res.json({ service });
+});
+
 // Deleting a service tears down everything it owns: pm2 process, domains
 // (nginx config + certificate) and its folder on disk.
 router.delete('/:id', async (req, res) => {

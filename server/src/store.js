@@ -42,6 +42,21 @@ function write(data) {
 
 const id = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
+const validIso = (v) => {
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
+};
+
+/**
+ * createdAt is admin-editable (services predating the panel get their real
+ * first-deploy date). Every change is recorded in createdAtHistory so the
+ * audit trail stays visible: [{ from, to, at, note? }].
+ */
+function pushCreatedAt(row, iso, note) {
+  row.createdAtHistory ||= [];
+  row.createdAtHistory.push({ from: row.createdAt || null, to: iso, at: now(), ...(note ? { note } : {}) });
+  row.createdAt = iso;
+}
 
 /* ----------------------------------------------------------------- Projects */
 
@@ -81,14 +96,18 @@ export function projectPath(project) {
   return project.path || path.join(config.projectsRoot, slugify(project.name));
 }
 
-export function createProject({ name, description = '' }) {
+export function createProject({ name, description = '', createdAt, createdAtNote }) {
   const db = read();
+  const backdated = validIso(createdAt); // registration of pre-existing work
   const project = {
     id: id(),
     name,
     description,
     path: path.join(config.projectsRoot, slugify(name)),
-    createdAt: now(),
+    createdAt: backdated || now(),
+    createdAtHistory: backdated
+      ? [{ from: null, to: backdated, at: now(), note: createdAtNote || 'set at registration' }]
+      : [],
   };
   db.projects.push(project);
   write(db);
@@ -179,8 +198,25 @@ export function createService(projectId, input = {}) {
     // env
     variables: input.variables || {}, // { KEY: value }
     createdAt: now(),
+    createdAtHistory: [],
   };
-  service.pm2Name = pm2NameFor(db, service);
+  const backdated = validIso(input.createdAt); // registering pre-existing work
+  if (backdated) {
+    service.createdAt = backdated;
+    service.createdAtHistory = [
+      { from: null, to: backdated, at: now(), note: input.createdAtNote || 'set at registration' },
+    ];
+  }
+  // Explicit pm2Name is for registering an ALREADY RUNNING process whose name
+  // predates the panel's naming scheme — the process must not be renamed
+  // (that would need a delete+start). Pinned names survive renames and the
+  // boot-time normalization migration.
+  if (typeof input.pm2Name === 'string' && input.pm2Name.trim()) {
+    service.pm2Name = input.pm2Name.trim();
+    service.pm2NamePinned = true;
+  } else {
+    service.pm2Name = pm2NameFor(db, service);
+  }
   db.services.push(service);
   write(db);
   return service;
@@ -196,8 +232,32 @@ export function updateService(serviceId, patch) {
     'staticOutputDir', 'port', 'autoDeploy', 'domains', 'variables',
   ];
   for (const k of allowed) if (k in patch) s[k] = patch[k];
-  if ('name' in patch) s.pm2Name = pm2NameFor(db, s); // pm2 name follows the service name
+  // pm2 name follows the service name — unless it was pinned at registration
+  // to match a pre-existing process.
+  if ('name' in patch && !s.pm2NamePinned) s.pm2Name = pm2NameFor(db, s);
   s.updatedAt = now();
+  write(db);
+  return s;
+}
+
+export function setProjectCreatedAt(projectId, createdAt, note) {
+  const iso = validIso(createdAt);
+  if (!iso) return null;
+  const db = read();
+  const p = db.projects.find((x) => x.id === projectId);
+  if (!p) return null;
+  pushCreatedAt(p, iso, note);
+  write(db);
+  return p;
+}
+
+export function setServiceCreatedAt(serviceId, createdAt, note) {
+  const iso = validIso(createdAt);
+  if (!iso) return null;
+  const db = read();
+  const s = db.services.find((x) => x.id === serviceId);
+  if (!s) return null;
+  pushCreatedAt(s, iso, note);
   write(db);
   return s;
 }
@@ -279,6 +339,7 @@ export function supersedeActiveDeployments(serviceId, exceptId) {
     const db = read();
     let changed = false;
     for (const s of db.services) {
+      if (s.pm2NamePinned) continue; // registered against a pre-existing process
       const want = pm2NameFor(db, s);
       if (s.pm2Name !== want) {
         s.pm2Name = want;

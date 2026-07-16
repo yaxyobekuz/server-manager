@@ -12,9 +12,9 @@ router.get('/', (req, res) => {
 });
 
 router.post('/', (req, res) => {
-  const { name, description } = req.body || {};
+  const { name, description, createdAt, createdAtNote } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name is required' });
-  const project = store.createProject({ name, description });
+  const project = store.createProject({ name, description, createdAt, createdAtNote });
   try {
     fs.mkdirSync(project.path, { recursive: true }); // /var/www/<project>
   } catch {
@@ -32,6 +32,14 @@ router.get('/:id', (req, res) => {
 router.patch('/:id', (req, res) => {
   const project = store.updateProject(req.params.id, req.body || {});
   if (!project) return res.status(404).json({ error: 'Project not found' });
+  res.json({ project });
+});
+
+// Admin-editable creation date; every change lands in createdAtHistory.
+router.put('/:id/created-at', (req, res) => {
+  const { createdAt, note } = req.body || {};
+  const project = store.setProjectCreatedAt(req.params.id, createdAt, note);
+  if (!project) return res.status(400).json({ error: 'Project not found or createdAt is not a valid date' });
   res.json({ project });
 });
 

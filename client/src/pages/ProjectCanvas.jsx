@@ -5,12 +5,14 @@ import { Icon } from '../components/Icons.jsx';
 import { timeAgo, DEPLOY_STATUS } from '../lib/format.js';
 import Modal from '../components/Modal.jsx';
 import NewServiceForm from '../components/NewServiceForm.jsx';
+import CreatedAtEditor from '../components/CreatedAtEditor.jsx';
 
 export default function ProjectCanvas() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [project, setProject] = useState(null);
   const [showNew, setShowNew] = useState(false);
+  const [showCreated, setShowCreated] = useState(false);
   const [error, setError] = useState('');
 
   const load = () => api.project(id).then((d) => setProject(d.project)).catch((e) => setError(e.message));
@@ -42,6 +44,13 @@ export default function ProjectCanvas() {
           <span className="text-white font-semibold">{project.name}</span>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowCreated(true)}
+            className="text-xs text-muted hover:text-white mr-2"
+            title="Creation date — click to view or edit (changes are recorded)"
+          >
+            Created {timeAgo(project.createdAt)}
+          </button>
           <button onClick={deleteProject} className="btn-ghost text-muted hover:text-danger"><Icon.trash /></button>
           <button onClick={() => setShowNew(true)} className="btn-brand"><Icon.plus /> New Service</button>
         </div>
@@ -76,6 +85,16 @@ export default function ProjectCanvas() {
           </div>
         )}
       </div>
+
+      <Modal open={showCreated} onClose={() => setShowCreated(false)} title={`Created — ${project.name}`}>
+        <CreatedAtEditor
+          entity={project}
+          onSave={async (iso) => {
+            const { project: updated } = await api.setProjectCreatedAt(id, iso);
+            setProject((prev) => ({ ...updated, services: prev.services }));
+          }}
+        />
+      </Modal>
 
       <Modal open={showNew} onClose={() => setShowNew(false)} title="Deploy a new service" wide>
         <NewServiceForm

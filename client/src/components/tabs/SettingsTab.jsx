@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '../../api/client.js';
 import { Icon } from '../Icons.jsx';
+import CreatedAtEditor from '../CreatedAtEditor.jsx';
 
 // Only the fields this tab actually edits. Snapshotting the WHOLE service
 // here and PATCHing it back used to silently revert variables/domains saved
@@ -78,6 +79,16 @@ export default function SettingsTab({ service, onChange, onDeleted }) {
             </button>
           </Row>
         )}
+      </Section>
+
+      <Section title="Created" desc="When this service was first deployed. Editable — every change is kept in the history below.">
+        <CreatedAtEditor
+          entity={service}
+          onSave={async (iso) => {
+            const { service: updated } = await api.setServiceCreatedAt(service.id, iso);
+            onChange(updated);
+          }}
+        />
       </Section>
 
       <div className="flex items-center justify-between">
