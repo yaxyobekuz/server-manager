@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client.js';
 import { createSocket } from '../../api/socket.js';
 import { Icon } from '../Icons.jsx';
@@ -6,17 +7,18 @@ import { timeAgo, DEPLOY_STATUS } from '../../lib/format.js';
 
 /** List of deployments + a live log drawer for the selected one. */
 export default function DeploymentsTab({ service, onDeployed }) {
-  const [deployments, setDeployments] = useState([]);
-  const [openId, setOpenId] = useState(null);
+  const queryClient = useQueryClient();
+  const [chosenId, setChosenId] = useState(null);
   const [logs, setLogs] = useState([]);
   const socketRef = useRef(null);
   const logEndRef = useRef(null);
 
-  const load = () => api.deployments(service.id).then((d) => {
-    setDeployments(d.deployments);
-    if (!openId && d.deployments[0]) setOpenId(d.deployments[0].id);
+  const { data } = useQuery({
+    queryKey: ['deployments', service.id],
+    queryFn: () => api.deployments(service.id),
   });
-  useEffect(() => { load(); }, [service.id]);
+  const deployments = data?.deployments || [];
+  const openId = chosenId || deployments[0]?.id || null;
 
   // Live deploy events for this service.
   useEffect(() => {
@@ -26,7 +28,8 @@ export default function DeploymentsTab({ service, onDeployed }) {
         setLogs((prev) => (msg.deploymentId === openId ? [...prev.slice(-2000), msg] : prev));
       }
       if (msg.type === 'deploy-status') {
-        load();
+        queryClient.invalidateQueries({ queryKey: ['deployments', service.id] });
+        onDeployed?.();
       }
     });
     socketRef.current = socket;
@@ -57,7 +60,7 @@ export default function DeploymentsTab({ service, onDeployed }) {
           return (
             <button
               key={d.id}
-              onClick={() => setOpenId(d.id)}
+              onClick={() => setChosenId(d.id)}
               className={`card w-full p-3.5 text-left transition ${active ? 'border-brand/50' : 'hover:border-line'}`}
             >
               <div className="flex items-center justify-between mb-1.5">

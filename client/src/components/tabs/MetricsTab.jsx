@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client.js';
 import { createSocket } from '../../api/socket.js';
 import { formatBytes, formatMonth, formatUptime, PM2_STATUS } from '../../lib/format.js';
@@ -27,27 +28,31 @@ export default function MetricsTab({ service }) {
   const [live, setLive] = useState(null); // pm2 describe (status/uptime/restarts)
   const [history, setHistory] = useState([]); // live window [{t,cpu,memory}]
   const [sysNow, setSysNow] = useState(null); // live system stats (disk/mem)
-  const [serviceDisk, setServiceDisk] = useState(null); // { path, used }
-  const [traffic, setTraffic] = useState(null); // this service's domain traffic (live window)
-  const [monthData, setMonthData] = useState(null); // { points, system }
-  const [monthTraffic, setMonthTraffic] = useState(null); // hourly domain traffic
   const socketRef = useRef(null);
 
-  // Snapshot (live window, months, per-service disk + traffic) — every 60s.
-  useEffect(() => {
-    const loadSnapshot = () => {
-      api.metrics(service.id).then((d) => {
-        setHistory(d.history || []);
-        setLive((prev) => d.live || prev);
-        setMonths(d.months || []);
-        setSysNow((prev) => d.system || prev);
-        setServiceDisk(d.serviceDisk || null);
-      });
-      api.traffic(service.id).then(setTraffic).catch(() => {});
-    };
-    loadSnapshot();
-    const timer = setInterval(loadSnapshot, 60000);
+  // Cached snapshot (live window, months, per-service disk) + domain traffic,
+  // refreshed every 60s; instant from cache when the tab is reopened.
+  const { data: snap } = useQuery({
+    queryKey: ['metrics', service.id],
+    queryFn: () => api.metrics(service.id),
+    refetchInterval: 60000,
+  });
+  const { data: traffic } = useQuery({
+    queryKey: ['traffic', service.id],
+    queryFn: () => api.traffic(service.id),
+    refetchInterval: 60000,
+  });
+  const serviceDisk = snap?.serviceDisk || null;
 
+  useEffect(() => {
+    if (!snap) return;
+    setHistory(snap.history || []);
+    setLive((prev) => snap.live || prev);
+    setMonths(snap.months || []);
+    setSysNow((prev) => snap.system || prev);
+  }, [snap]);
+
+  useEffect(() => {
     const socket = createSocket((msg) => {
       if (msg.type !== 'metrics') return;
       const mine = (msg.processes || []).find((p) => p.name === name);
@@ -60,18 +65,26 @@ export default function MetricsTab({ service }) {
     socketRef.current = socket;
     socket.send({ action: 'metrics:start' });
     return () => {
-      clearInterval(timer);
       socket.send({ action: 'metrics:stop' });
       socket.close();
     };
   }, [service.id]);
 
-  // Selected month's persisted hourly aggregates (process + domain traffic).
-  useEffect(() => {
-    if (period === 'live') { setMonthData(null); setMonthTraffic(null); return; }
-    api.metricsMonth(service.id, period).then(setMonthData).catch(() => setMonthData({ points: [], system: [] }));
-    api.trafficMonth(service.id, period).then((d) => setMonthTraffic(d.points || [])).catch(() => setMonthTraffic([]));
-  }, [service.id, period]);
+  // Selected month's persisted hourly aggregates (process + domain traffic) —
+  // cached per month, so browsing between months is instant.
+  const isMonth = period !== 'live';
+  const { data: monthData } = useQuery({
+    queryKey: ['metricsMonth', service.id, period],
+    queryFn: () => api.metricsMonth(service.id, period),
+    enabled: isMonth,
+    staleTime: 5 * 60_000,
+  });
+  const { data: monthTraffic } = useQuery({
+    queryKey: ['trafficMonth', service.id, period],
+    queryFn: () => api.trafficMonth(service.id, period).then((d) => d.points || []),
+    enabled: isMonth,
+    staleTime: 5 * 60_000,
+  });
 
   const isLive = period === 'live';
   const points = monthData?.points || [];

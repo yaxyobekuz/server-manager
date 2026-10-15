@@ -29,9 +29,10 @@ function read() {
     data.projects ||= [];
     data.services ||= [];
     data.deployments ||= [];
+    data.admins ||= [];
     return data;
   } catch {
-    return { projects: [], services: [], deployments: [] };
+    return { projects: [], services: [], deployments: [], admins: [] };
   }
 }
 
@@ -119,6 +120,7 @@ export function updateProject(projectId, patch) {
   const p = db.projects.find((x) => x.id === projectId);
   if (!p) return null;
   for (const k of ['name', 'description']) if (k in patch) p[k] = patch[k];
+  if ('pinned' in patch) p.pinned = !!patch.pinned;
   write(db);
   return p;
 }
@@ -320,6 +322,26 @@ export function setDeploymentStatus(deploymentId, status) {
   return d;
 }
 
+/**
+ * A deployment left in building/deploying when the panel starts is dead —
+ * its child processes died with the previous panel process. Without this it
+ * shows "Building…" forever in the UI.
+ */
+export function failOrphanedDeployments() {
+  const db = read();
+  let n = 0;
+  for (const d of db.deployments) {
+    if (['building', 'deploying'].includes(d.status)) {
+      d.status = 'failed';
+      d.finishedAt = now();
+      d.logs.push({ ts: now(), stream: 'stderr', line: 'Deployment interrupted — the panel was restarted mid-deploy. Run it again.' });
+      n++;
+    }
+  }
+  if (n) write(db);
+  return n;
+}
+
 /** Mark all of a service's previous active deployments as superseded. */
 export function supersedeActiveDeployments(serviceId, exceptId) {
   const db = read();
@@ -329,6 +351,87 @@ export function supersedeActiveDeployments(serviceId, exceptId) {
     }
   }
   write(db);
+}
+
+/** Reverse lookup for WS actions that only carry a pm2 name (log streams). */
+export function findServiceByPm2Name(pm2Name) {
+  const db = read();
+  return db.services.find((s) => (s.pm2Name || s.name) === pm2Name) || null;
+}
+
+/* ------------------------------------------------------------------ Admins */
+// Additional admins created by the owner. The password IS the identity
+// (login stays password-only), so passwords must be unique — enforced in the
+// admins routes. Only the scrypt hash is ever stored or returned.
+
+export function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  return `${salt}:${crypto.scryptSync(password, salt, 32).toString('hex')}`;
+}
+
+export function checkPassword(password, stored) {
+  const [salt, hash] = String(stored || '').split(':');
+  if (!salt || !hash) return false;
+  const probe = crypto.scryptSync(password, salt, 32);
+  const target = Buffer.from(hash, 'hex');
+  return probe.length === target.length && crypto.timingSafeEqual(probe, target);
+}
+
+const publicAdmin = ({ passwordHash, ...rest }) => rest;
+
+export function listAdmins() {
+  return read().admins.map(publicAdmin);
+}
+
+export function getAdmin(adminId) {
+  const a = read().admins.find((x) => x.id === adminId);
+  return a ? publicAdmin(a) : null;
+}
+
+export function findAdminByPassword(password) {
+  for (const a of read().admins) {
+    if (checkPassword(password, a.passwordHash)) return publicAdmin(a);
+  }
+  return null;
+}
+
+export function createAdmin({ name, password, permissions = {}, projects = [] }) {
+  const db = read();
+  const admin = {
+    id: id(),
+    name: String(name || '').trim() || 'admin',
+    passwordHash: hashPassword(password),
+    permissions, // { permissionKey: boolean }
+    projects, // 'all' | [projectId, ...]
+    disabled: false,
+    createdAt: now(),
+  };
+  db.admins.push(admin);
+  write(db);
+  return publicAdmin(admin);
+}
+
+export function updateAdmin(adminId, patch) {
+  const db = read();
+  const a = db.admins.find((x) => x.id === adminId);
+  if (!a) return null;
+  if ('name' in patch) a.name = String(patch.name || '').trim() || a.name;
+  if (patch.permissions && typeof patch.permissions === 'object') a.permissions = patch.permissions;
+  if ('projects' in patch) {
+    a.projects = patch.projects === 'all' ? 'all' : Array.isArray(patch.projects) ? patch.projects : a.projects;
+  }
+  if ('disabled' in patch) a.disabled = Boolean(patch.disabled);
+  if (typeof patch.password === 'string' && patch.password) a.passwordHash = hashPassword(patch.password);
+  write(db);
+  return publicAdmin(a);
+}
+
+export function deleteAdmin(adminId) {
+  const db = read();
+  const before = db.admins.length;
+  db.admins = db.admins.filter((x) => x.id !== adminId);
+  write(db);
+  return db.admins.length < before;
 }
 
 /* --------------------------------------------------------------- migration */

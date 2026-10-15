@@ -6,9 +6,10 @@ import { createSocket } from '../../api/socket.js';
 import { Icon } from '../Icons.jsx';
 
 /**
- * Interactive shell that starts in this service's folder with the service's
- * environment variables loaded (the same env a deploy runs with). One shell
- * per open tab — leaving the tab ends it; coming back starts a fresh one.
+ * Interactive shell. With a `service` prop it starts in that service's folder
+ * with the service's environment variables loaded (the same env a deploy runs
+ * with); without one it is a general server shell starting at /var/www.
+ * One shell per mount — leaving the page ends it; coming back starts fresh.
  */
 export default function TerminalTab({ service }) {
   const boxRef = useRef(null);
@@ -34,10 +35,15 @@ export default function TerminalTab({ service }) {
     const socket = createSocket((msg) => {
       if (msg.type === 'term:data') term.write(msg.data);
       if (msg.type === 'term:exit') {
-        term.write('\r\n\x1b[90m── shell exited — switch tabs and back to start a new one ──\x1b[0m\r\n');
+        term.write('\r\n\x1b[90m── shell exited — leave the page and come back to start a new one ──\x1b[0m\r\n');
       }
     });
-    socket.send({ action: 'term:start', serviceId: service.id, cols: term.cols, rows: term.rows });
+    socket.send({
+      action: 'term:start',
+      ...(service ? { serviceId: service.id } : {}),
+      cols: term.cols,
+      rows: term.rows,
+    });
     const sub = term.onData((data) => socket.send({ action: 'term:input', data }));
 
     const ro = new ResizeObserver(() => {
@@ -54,11 +60,13 @@ export default function TerminalTab({ service }) {
       socket.close();
       term.dispose();
     };
-  }, [service.id]);
+  }, [service?.id]);
 
-  const dir = service.rootDirectory
-    ? `${service.localPath || ''}/${service.rootDirectory}`.replace(/\/{2,}/g, '/')
-    : service.localPath;
+  const dir = !service
+    ? '/var/www'
+    : service.rootDirectory
+      ? `${service.localPath || ''}/${service.rootDirectory}`.replace(/\/{2,}/g, '/')
+      : service.localPath;
 
   return (
     <div className="card overflow-hidden">
@@ -67,7 +75,7 @@ export default function TerminalTab({ service }) {
           <Icon.terminal width={15} height={15} /> Terminal
         </span>
         <span className="text-[11px] text-muted font-mono truncate ml-4">
-          scoped to {dir || '—'} · service env loaded
+          starts in {dir || '—'}{service ? ' · service env loaded' : ''}
         </span>
       </div>
       <div ref={boxRef} className="h-[65vh] min-h-[320px] bg-[#0b0d12] p-3" />

@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client.js';
 import { Icon, StatusDot } from '../components/Icons.jsx';
+import { useMe, can } from '../lib/useMe.js';
 import { timeAgo, DEPLOY_STATUS } from '../lib/format.js';
 import Modal from '../components/Modal.jsx';
 
@@ -25,6 +27,7 @@ function Toggle({ on, onChange }) {
  */
 function CopyProjectModal({ project, onClose }) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const services = project?.services || [];
   const [name, setName] = useState('');
   const [deployIds, setDeployIds] = useState(new Set());
@@ -54,6 +57,7 @@ function CopyProjectModal({ project, onClose }) {
         name,
         deployServiceIds: [...deployIds],
       });
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
       navigate(`/projects/${created.id}`);
     } catch (err) {
       setError(err.message);
@@ -106,7 +110,6 @@ function CopyProjectModal({ project, onClose }) {
 }
 
 export default function Projects() {
-  const [projects, setProjects] = useState([]);
   const [showNew, setShowNew] = useState(false);
   const [name, setName] = useState('');
   const [error, setError] = useState('');
@@ -114,6 +117,16 @@ export default function Projects() {
   const [copying, setCopying] = useState(null); // project being copied
   const [query, setQuery] = useState('');
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const me = useMe();
+  const canEdit = can(me, 'editServices');
+
+  const { data, error: loadError } = useQuery({ queryKey: ['projects'], queryFn: api.projects });
+  // Pinned projects float to the top; the stable sort keeps the original
+  // order within each group.
+  const projects = [...(data?.projects || [])].sort(
+    (a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)
+  );
 
   // Match against project name, description and its services' names.
   const q = query.trim().toLowerCase();
@@ -125,9 +138,6 @@ export default function Projects() {
           (p.description || '').toLowerCase().includes(q) ||
           (p.services || []).some((s) => s.name.toLowerCase().includes(q))
       );
-
-  const load = () => api.projects().then((d) => setProjects(d.projects)).catch((e) => setError(e.message));
-  useEffect(() => { load(); }, []);
 
   // Any click outside the dropdown closes it (the trigger stops propagation).
   useEffect(() => {
@@ -141,9 +151,18 @@ export default function Projects() {
     e.preventDefault();
     try {
       const { project } = await api.createProject({ name });
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
       setShowNew(false);
       setName('');
       navigate(`/projects/${project.id}`);
+    } catch (err) { setError(err.message); }
+  };
+
+  const togglePin = async (p) => {
+    setMenuFor(null);
+    try {
+      await api.updateProject(p.id, { pinned: !p.pinned });
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
     } catch (err) { setError(err.message); }
   };
 
@@ -171,14 +190,16 @@ export default function Projects() {
               </button>
             )}
           </div>
-          <button onClick={() => setShowNew(true)} className="btn-brand shrink-0">
-            <Icon.plus /> New Project
-          </button>
+          {canEdit && (
+            <button onClick={() => setShowNew(true)} className="btn-brand shrink-0">
+              <Icon.plus /> New Project
+            </button>
+          )}
         </div>
       </header>
 
       <div className="p-8">
-        {error && <div className="mb-4 chip bg-danger/10 border-danger/30 text-danger">{error}</div>}
+        {(error || loadError) && <div className="mb-4 chip bg-danger/10 border-danger/30 text-danger">{error || loadError.message}</div>}
 
         {projects.length === 0 ? (
           <div className="card p-16 text-center max-w-lg mx-auto mt-10">
@@ -187,7 +208,7 @@ export default function Projects() {
             </div>
             <h2 className="text-white font-semibold mb-1">No projects yet</h2>
             <p className="text-sm text-muted mb-5">Create a project to group your services and start deploying.</p>
-            <button onClick={() => setShowNew(true)} className="btn-brand mx-auto"><Icon.plus /> New Project</button>
+            {canEdit && <button onClick={() => setShowNew(true)} className="btn-brand mx-auto"><Icon.plus /> New Project</button>}
           </div>
         ) : visible.length === 0 ? (
           <div className="card p-10 text-center max-w-lg mx-auto mt-10">
@@ -209,14 +230,19 @@ export default function Projects() {
                   className="relative card p-5 text-left hover:border-brand/40 hover:shadow-glow transition group cursor-pointer"
                 >
                   <div className="flex items-center justify-between mb-4">
-                    <span className="font-semibold text-white group-hover:text-brand transition">{p.name}</span>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setMenuFor(menuFor === p.id ? null : p.id); }}
-                      className="p-1.5 -m-1.5 rounded-md text-muted hover:text-white hover:bg-bg-hover transition"
-                      title="Project actions"
-                    >
-                      <Icon.dots />
-                    </button>
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      {p.pinned && <Icon.pin width={13} height={13} className="text-brand shrink-0" />}
+                      <span className="font-semibold text-white group-hover:text-brand transition truncate">{p.name}</span>
+                    </span>
+                    {canEdit && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setMenuFor(menuFor === p.id ? null : p.id); }}
+                        className="p-1.5 -m-1.5 rounded-md text-muted hover:text-white hover:bg-bg-hover transition"
+                        title="Project actions"
+                      >
+                        <Icon.dots />
+                      </button>
+                    )}
                   </div>
 
                   {menuFor === p.id && (
@@ -224,6 +250,12 @@ export default function Projects() {
                       className="absolute right-4 top-12 z-20 card p-1.5 w-44 shadow-glow"
                       onClick={(e) => e.stopPropagation()}
                     >
+                      <button
+                        onClick={() => togglePin(p)}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:text-white hover:bg-bg-hover rounded-md transition"
+                      >
+                        <Icon.pin /> {p.pinned ? 'Unpin project' : 'Pin project'}
+                      </button>
                       <button
                         onClick={() => { setMenuFor(null); setCopying(p); }}
                         className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:text-white hover:bg-bg-hover rounded-md transition"

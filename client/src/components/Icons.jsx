@@ -136,6 +136,29 @@ export const Icon = {
       <path {...s} d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
     </svg>
   ),
+  shield: (p) => (
+    <svg viewBox="0 0 24 24" width="16" height="16" {...p}>
+      <path {...s} d="M12 3l7 3v5c0 4.6-3 8.7-7 10-4-1.3-7-5.4-7-10V6l7-3z" />
+      <path {...s} d="M9.5 12l2 2 3.5-3.5" />
+    </svg>
+  ),
+  info: (p) => (
+    <svg viewBox="0 0 24 24" width="18" height="18" {...p}>
+      <circle cx="12" cy="12" r="9" {...s} />
+      <path {...s} d="M12 11v5M12 8h.01" />
+    </svg>
+  ),
+  zap: (p) => (
+    <svg viewBox="0 0 24 24" width="16" height="16" {...p}>
+      <path {...s} d="M13 2L3 14h7l-1 8 10-12h-7l1-8z" />
+    </svg>
+  ),
+  pin: (p) => (
+    <svg viewBox="0 0 24 24" width="15" height="15" {...p}>
+      <path {...s} d="M12 17v5" />
+      <path {...s} d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+    </svg>
+  ),
 };
 
 export function StatusDot({ className = '', pulse = false }) {

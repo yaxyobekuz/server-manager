@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client.js';
 import { Icon } from '../Icons.jsx';
 
@@ -20,15 +21,18 @@ export default function DomainsTab({ service, onChange }) {
   const [https, setHttps] = useState(true);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
-  const [statuses, setStatuses] = useState({}); // host -> {confExists, enabled, ssl}
   const [repairing, setRepairing] = useState(null); // host being repaired
   const [repairMsg, setRepairMsg] = useState(null); // {host, ok, text}
+  const queryClient = useQueryClient();
 
+  const hostsKey = (service.domains || []).map((d) => d.host).join(',');
+  const { data: statusData } = useQuery({
+    queryKey: ['domainStatus', service.id, hostsKey],
+    queryFn: () => api.domainStatus(service.id),
+  });
+  const statuses = Object.fromEntries((statusData?.statuses || []).map((s) => [s.host, s]));
   const loadStatus = () =>
-    api.domainStatus(service.id)
-      .then((d) => setStatuses(Object.fromEntries(d.statuses.map((s) => [s.host, s]))))
-      .catch(() => {});
-  useEffect(() => { loadStatus(); }, [service.id, service.domains]);
+    queryClient.invalidateQueries({ queryKey: ['domainStatus', service.id] });
 
   const add = async () => {
     setBusy(true); setMsg(null);
@@ -50,13 +54,25 @@ export default function DomainsTab({ service, onChange }) {
   };
 
   const remove = async (h) => {
-    if (!confirm(`Remove domain ${h}?`)) return;
-    await api.removeDomain(service.id, h);
+    // A config the panel never wrote (external site) is only detached — the
+    // working nginx config and certificate stay exactly as they are.
+    const external = statuses[h] && statuses[h].managed === false;
+    const ok = external
+      ? confirm(`Detach ${h} from this service?\n\nIts nginx config was written outside the panel, so the config and certificate will be left untouched — the site keeps working.`)
+      : confirm(`Remove domain ${h}?\n\nThis deletes its nginx config and certificate.`);
+    if (!ok) return;
+    await api.removeDomain(service.id, h, external);
     const { service: updated } = await api.service(service.id);
     onChange(updated);
   };
 
   const repair = async (h) => {
+    // Repair rewrites the config from the panel template — on a hand-written
+    // (external) config that would throw away its custom directives.
+    if (statuses[h] && statuses[h].managed === false) {
+      const ok = confirm(`${h} has a hand-written nginx config.\n\nRepair will REPLACE it with the panel's standard template — custom directives in the current config will be lost. Continue?`);
+      if (!ok) return;
+    }
     setRepairing(h); setRepairMsg(null);
     try {
       const res = await api.repairDomain(service.id, h);
@@ -124,6 +140,12 @@ export default function DomainsTab({ service, onChange }) {
             const stat = statuses[d.host];
             const sslBroken = d.https && stat && !stat.ssl;
             const confBroken = stat && (!stat.confExists || !stat.enabled);
+            const days = stat?.certDaysLeft;
+            const sslChipCls = days != null && days <= 7
+              ? 'bg-danger/10 border-danger/30 text-danger'
+              : days != null && days <= 21
+                ? 'bg-warn/10 border-warn/30 text-warn'
+                : 'bg-ok/10 border-ok/30 text-ok';
             return (
               <div key={d.host} className="bg-bg-input border border-line rounded-lg px-3.5 py-2.5">
                 <div className="flex items-center justify-between">
@@ -135,7 +157,14 @@ export default function DomainsTab({ service, onChange }) {
                     <span className="text-xs text-muted shrink-0">→ {d.root || `:${d.port}`}</span>
                     {confBroken && <span className="chip bg-danger/10 border-danger/30 text-danger shrink-0">config missing</span>}
                     {!confBroken && sslBroken && <span className="chip bg-danger/10 border-danger/30 text-danger shrink-0">SSL broken</span>}
-                    {!confBroken && !sslBroken && d.https && <span className="chip bg-ok/10 border-ok/30 text-ok shrink-0">SSL</span>}
+                    {!confBroken && !sslBroken && d.https && (
+                      <span className={`chip ${sslChipCls} shrink-0`} title={days != null ? `Certificate expires in ${days} days` : ''}>
+                        SSL{days != null ? ` · ${days}d` : ''}
+                      </span>
+                    )}
+                    {stat?.managed === false && (
+                      <span className="chip bg-bg-hover border-line text-muted shrink-0" title="nginx config written outside the panel — Repair would overwrite it, delete only detaches">external conf</span>
+                    )}
                   </div>
                   <div className="flex items-center gap-3 shrink-0 ml-3">
                     <button

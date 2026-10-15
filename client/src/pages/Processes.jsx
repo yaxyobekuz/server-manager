@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client.js';
 import { createSocket } from '../api/socket.js';
 import { Icon } from '../components/Icons.jsx';
@@ -6,14 +7,21 @@ import { formatBytes, formatUptime, PM2_STATUS } from '../lib/format.js';
 
 /** Global view of every pm2 process on the VPS (not just managed services). */
 export default function Processes() {
-  const [procs, setProcs] = useState([]);
   const [system, setSystem] = useState(null);
   const [busy, setBusy] = useState({});
   const socketRef = useRef(null);
+  const queryClient = useQueryClient();
+
+  // Cached list, refreshed every 2.5s while the page is open.
+  const { data } = useQuery({
+    queryKey: ['processes'],
+    queryFn: api.processes,
+    refetchInterval: 2500,
+  });
+  const procs = data?.processes || [];
 
   useEffect(() => {
-    api.processes().then((d) => setProcs(d.processes)).catch(() => {});
-    api.systemStats().then((d) => setSystem(d.system)).catch(() => {});
+    api.systemStats().then((d) => setSystem((prev) => prev || d.system)).catch(() => {});
     const socket = createSocket((msg) => {
       if (msg.type === 'metrics') {
         if (msg.system) setSystem(msg.system);
@@ -21,16 +29,14 @@ export default function Processes() {
     });
     socket.send({ action: 'metrics:start' });
     socketRef.current = socket;
-    const poll = setInterval(() => api.processes().then((d) => setProcs(d.processes)).catch(() => {}), 2500);
-    return () => { socket.send({ action: 'metrics:stop' }); socket.close(); clearInterval(poll); };
+    return () => { socket.send({ action: 'metrics:stop' }); socket.close(); };
   }, []);
 
   const act = async (id, action) => {
     setBusy((b) => ({ ...b, [id]: true }));
     try { await api.processAction(id, action); }
     finally {
-      const d = await api.processes();
-      setProcs(d.processes);
+      await queryClient.invalidateQueries({ queryKey: ['processes'] });
       setBusy((b) => ({ ...b, [id]: false }));
     }
   };

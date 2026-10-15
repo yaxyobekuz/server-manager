@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client.js';
 import { Icon } from '../components/Icons.jsx';
+import { useMe, can } from '../lib/useMe.js';
 import { timeAgo, DEPLOY_STATUS } from '../lib/format.js';
 import Modal from '../components/Modal.jsx';
 import NewServiceForm from '../components/NewServiceForm.jsx';
@@ -10,13 +12,54 @@ import CreatedAtEditor from '../components/CreatedAtEditor.jsx';
 export default function ProjectCanvas() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [project, setProject] = useState(null);
+  const queryClient = useQueryClient();
   const [showNew, setShowNew] = useState(false);
   const [showCreated, setShowCreated] = useState(false);
-  const [error, setError] = useState('');
+  const [powering, setPowering] = useState(null); // 'stop' | 'start'
+  const [powerMsg, setPowerMsg] = useState('');
+  const me = useMe();
+  const canEdit = can(me, 'editServices');
 
-  const load = () => api.project(id).then((d) => setProject(d.project)).catch((e) => setError(e.message));
-  useEffect(() => { load(); }, [id]);
+  const { data, error: loadError } = useQuery({
+    queryKey: ['project', id],
+    queryFn: () => api.project(id),
+  });
+  const project = data?.project;
+  const error = loadError?.message || '';
+
+  // Live pm2 state of the project's services drives the Stop/Start buttons.
+  const { data: procData } = useQuery({
+    queryKey: ['projectProcs', id],
+    queryFn: () => api.projectProcesses(id),
+    refetchInterval: 10_000,
+  });
+  const procs = procData?.processes || [];
+  const online = procs.filter((p) => p.status === 'online').length;
+  const startable = procs.some((p) => p.status !== 'online' && p.status !== 'not running');
+
+  const power = async (verb) => {
+    if (
+      verb === 'stop' &&
+      !confirm(
+        `Stop all running services of "${project.name}"?\n\n` +
+          `Their pm2 processes stop and the sites they serve go down until you press Start or Deploy. ` +
+          `Static services keep being served by nginx.`
+      )
+    )
+      return;
+    setPowering(verb);
+    setPowerMsg('');
+    try {
+      const r = verb === 'stop' ? await api.stopProject(id) : await api.startProject(id);
+      const failed = (r.results || []).filter((x) => !x.ok);
+      if (failed.length) setPowerMsg(failed.map((f) => `${f.service}: ${f.output}`).join(' · '));
+    } catch (e) {
+      setPowerMsg(e.message);
+    } finally {
+      setPowering(null);
+      queryClient.invalidateQueries({ queryKey: ['projectProcs', id] });
+    }
+  };
 
   const deleteProject = async () => {
     const warning =
@@ -27,6 +70,7 @@ export default function ProjectCanvas() {
       `• service folders and the project folder itself`;
     if (!confirm(warning)) return;
     await api.deleteProject(id);
+    queryClient.invalidateQueries({ queryKey: ['projects'] });
     navigate('/');
   };
 
@@ -45,14 +89,46 @@ export default function ProjectCanvas() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setShowCreated(true)}
+            onClick={() => canEdit && setShowCreated(true)}
             className="text-xs text-muted hover:text-white mr-2"
             title="Creation date — click to view or edit (changes are recorded)"
           >
             Created {timeAgo(project.createdAt)}
           </button>
-          <button onClick={deleteProject} className="btn-ghost text-muted hover:text-danger"><Icon.trash /></button>
-          <button onClick={() => setShowNew(true)} className="btn-brand"><Icon.plus /> New Service</button>
+          {procs.length > 0 && (
+            <span
+              className={`chip ${online > 0 ? 'bg-ok/10 border-ok/30 text-ok' : 'bg-bg-hover border-line text-muted'}`}
+              title="pm2 processes of this project"
+            >
+              {online}/{procs.length} running
+            </span>
+          )}
+          {can(me, 'deploy') && online > 0 && (
+            <button
+              onClick={() => power('stop')}
+              disabled={!!powering}
+              className="btn-ghost text-muted hover:text-danger"
+              title="Stop every running pm2 process of this project"
+            >
+              <Icon.stop width={14} height={14} /> {powering === 'stop' ? 'Stopping…' : 'Stop'}
+            </button>
+          )}
+          {can(me, 'deploy') && startable && (
+            <button
+              onClick={() => power('start')}
+              disabled={!!powering}
+              className="btn-ghost text-muted hover:text-ok"
+              title="Start the project's stopped pm2 processes"
+            >
+              <Icon.play width={14} height={14} /> {powering === 'start' ? 'Starting…' : 'Start'}
+            </button>
+          )}
+          {can(me, 'deleteServices') && (
+            <button onClick={deleteProject} className="btn-ghost text-muted hover:text-danger"><Icon.trash /></button>
+          )}
+          {canEdit && (
+            <button onClick={() => setShowNew(true)} className="btn-brand"><Icon.plus /> New Service</button>
+          )}
         </div>
       </header>
 
@@ -75,7 +151,7 @@ export default function ProjectCanvas() {
             </div>
             <h2 className="text-white font-semibold mb-1">Add your first service</h2>
             <p className="text-sm text-muted mb-5">Deploy from a GitHub repo or a local folder on this VPS.</p>
-            <button onClick={() => setShowNew(true)} className="btn-brand mx-auto"><Icon.plus /> New Service</button>
+            {canEdit && <button onClick={() => setShowNew(true)} className="btn-brand mx-auto"><Icon.plus /> New Service</button>}
           </div>
         ) : (
           <div className="relative grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 max-w-5xl">
@@ -91,7 +167,10 @@ export default function ProjectCanvas() {
           entity={project}
           onSave={async (iso) => {
             const { project: updated } = await api.setProjectCreatedAt(id, iso);
-            setProject((prev) => ({ ...updated, services: prev.services }));
+            queryClient.setQueryData(['project', id], (old) => ({
+              project: { ...updated, services: old?.project?.services || [] },
+            }));
+            queryClient.invalidateQueries({ queryKey: ['projects'] });
           }}
         />
       </Modal>
@@ -100,7 +179,12 @@ export default function ProjectCanvas() {
         <NewServiceForm
           projectId={id}
           projectName={project.name}
-          onCreated={(svc) => { setShowNew(false); navigate(`/projects/${id}/services/${svc.id}`); }}
+          onCreated={(svc) => {
+            setShowNew(false);
+            queryClient.invalidateQueries({ queryKey: ['project', id] });
+            queryClient.invalidateQueries({ queryKey: ['projects'] });
+            navigate(`/projects/${id}/services/${svc.id}`);
+          }}
           onCancel={() => setShowNew(false)}
         />
       </Modal>

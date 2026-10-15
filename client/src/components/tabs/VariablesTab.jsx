@@ -8,6 +8,7 @@ export default function VariablesTab({ serviceId }) {
   const [raw, setRaw] = useState('');
   const [mode, setMode] = useState('table'); // table | raw
   const [saved, setSaved] = useState(false);
+  const [meta, setMeta] = useState(null); // { source: 'file'|'panel', path }
 
   const fromObj = (obj) => Object.entries(obj).map(([k, v]) => ({ k, v }));
   const toObj = (rs) => Object.fromEntries(rs.filter((r) => r.k).map((r) => [r.k, r.v]));
@@ -17,6 +18,7 @@ export default function VariablesTab({ serviceId }) {
       const r = fromObj(d.variables || {});
       setRows(r.length ? r : [{ k: '', v: '' }]);
       setRaw(r.map((x) => `${x.k}=${x.v}`).join('\n'));
+      setMeta({ source: d.source, path: d.path });
     });
   useEffect(() => { load(); }, [serviceId]);
 
@@ -28,7 +30,8 @@ export default function VariablesTab({ serviceId }) {
 
   const save = async () => {
     const variables = mode === 'raw' ? parseRaw(raw) : toObj(rows);
-    await api.saveVariables(serviceId, variables);
+    const d = await api.saveVariables(serviceId, variables);
+    if (d.source) setMeta({ source: d.source, path: d.path });
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
     if (mode === 'raw') setRows(fromObj(variables).length ? fromObj(variables) : [{ k: '', v: '' }]);
@@ -39,7 +42,14 @@ export default function VariablesTab({ serviceId }) {
       <div className="flex items-center justify-between mb-5">
         <div>
           <h3 className="text-white font-semibold">Variables</h3>
-          <p className="text-xs text-muted mt-0.5">Written to <span className="font-mono">.env</span> on every deploy.</p>
+          <p className="text-xs text-muted mt-0.5">
+            {meta?.source === 'file' ? (
+              <>Reads and saves the service's <span className="font-mono">.env</span> file directly — the file is the source of truth.</>
+            ) : (
+              <>No <span className="font-mono">.env</span> yet — kept in the panel and written to the file on the first deploy.</>
+            )}
+          </p>
+          {meta?.path && <p className="text-[11px] text-muted font-mono mt-0.5">{meta.path}</p>}
         </div>
         <div className="flex items-center gap-2">
           <div className="flex bg-bg-input border border-line rounded-lg p-0.5 text-xs">

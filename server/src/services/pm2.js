@@ -96,6 +96,11 @@ export function deleteProc(idOrName) {
   return action(['delete', String(idOrName)]);
 }
 
+/** Persist the current process list, so stopped stays stopped across reboots. */
+export function save() {
+  return action(['save', '--force']);
+}
+
 /** Describe a single process (used for the service metrics view). */
 export async function describe(idOrName) {
   const all = await list();

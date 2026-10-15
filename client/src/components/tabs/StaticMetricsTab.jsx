@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client.js';
 import { formatBytes, formatMonth } from '../../lib/format.js';
 import { Icon } from '../Icons.jsx';
@@ -29,21 +30,19 @@ const fmtTimeMonth = (t, long) => {
 
 export default function StaticMetricsTab({ service }) {
   const [period, setPeriod] = useState('live');
-  const [data, setData] = useState(null); // /traffic payload
-  const [monthPts, setMonthPts] = useState(null);
 
-  useEffect(() => {
-    let alive = true;
-    const load = () => api.traffic(service.id).then((d) => alive && setData(d)).catch(() => {});
-    load();
-    const t = setInterval(load, 30000);
-    return () => { alive = false; clearInterval(t); };
-  }, [service.id]);
-
-  useEffect(() => {
-    if (period === 'live') { setMonthPts(null); return; }
-    api.trafficMonth(service.id, period).then((d) => setMonthPts(d.points || [])).catch(() => setMonthPts([]));
-  }, [service.id, period]);
+  // Same cache key as the backend Metrics tab — one fetch feeds both.
+  const { data } = useQuery({
+    queryKey: ['traffic', service.id],
+    queryFn: () => api.traffic(service.id),
+    refetchInterval: 30000,
+  });
+  const { data: monthPts } = useQuery({
+    queryKey: ['trafficMonth', service.id, period],
+    queryFn: () => api.trafficMonth(service.id, period).then((d) => d.points || []),
+    enabled: period !== 'live',
+    staleTime: 5 * 60_000,
+  });
 
   const isLive = period === 'live';
   const months = data?.months || [];

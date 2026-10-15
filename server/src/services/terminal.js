@@ -1,10 +1,5 @@
 import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-
-// Rcfile that pins the shell inside SM_SCOPE (see term-rc.sh).
-const RC_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'term-rc.sh');
 
 /**
  * Interactive shell on a real pseudo-terminal WITHOUT native modules:
@@ -26,16 +21,10 @@ const clamp = (v, lo, hi, dflt) => {
 export function openTerminal({ cwd, env = process.env, cols, rows }, onData, onExit) {
   const c = clamp(cols, 20, 500, 80);
   const r = clamp(rows, 5, 200, 24);
-  let scope = cwd;
-  try {
-    scope = fs.realpathSync(cwd); // the guard compares physical paths
-  } catch {
-    /* keep as-is */
-  }
   const child = spawn(
     'script',
-    ['-qfc', `stty cols ${c} rows ${r} 2>/dev/null; exec bash --rcfile '${RC_FILE}' -i`, '/dev/null'],
-    { cwd, env: { ...env, TERM: 'xterm-256color', SM_SCOPE: scope } }
+    ['-qfc', `stty cols ${c} rows ${r} 2>/dev/null; exec bash -i`, '/dev/null'],
+    { cwd, env: { ...env, TERM: 'xterm-256color' } }
   );
   child.stdout.on('data', (d) => onData(d.toString('utf8')));
   child.stderr.on('data', (d) => onData(d.toString('utf8')));

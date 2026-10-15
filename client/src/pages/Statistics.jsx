@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client.js';
 import { createSocket } from '../api/socket.js';
 import { Icon } from '../components/Icons.jsx';
@@ -41,14 +42,10 @@ const fmtBootUptime = (sec) => {
 const loadCpuPct = (sys) => (sys ? Math.min(100, (sys.load[0] / (sys.cpus || 1)) * 100) : 0);
 
 export default function Statistics() {
-  const [ov, setOv] = useState(null); // /system/overview payload
   const [sysNow, setSysNow] = useState(null); // freshest system stats (WS)
   const [win, setWin] = useState([]); // live window [{t,cpu,mem,rx,tx}]
   const [liveProc, setLiveProc] = useState({}); // name -> {cpu, memory}
   const [period, setPeriod] = useState('live');
-  const [monthSys, setMonthSys] = useState(null); // hourly system points
-  const [storage, setStorage] = useState(null);
-  const [projUsage, setProjUsage] = useState(null); // per-project comparison rows
   const seededRef = useRef(false);
 
   // Tab lives in the URL: /statistics (server) | /statistics/projects.
@@ -56,35 +53,27 @@ export default function Statistics() {
   const navigate = useNavigate();
   const tab = tabParam === 'projects' ? 'projects' : 'server';
 
-  // Overview snapshot (processes, months, counts) — refreshed every 30s.
+  // Overview snapshot (processes, months, counts) — cached, refreshed every 30s.
+  const { data: ov } = useQuery({
+    queryKey: ['sys', 'overview'],
+    queryFn: api.systemOverview,
+    refetchInterval: 30000,
+  });
   useEffect(() => {
-    const load = () =>
-      api.systemOverview().then((d) => {
-        setOv(d);
-        setSysNow((prev) => prev || d.system);
-        if (!seededRef.current && d.window?.length) {
-          setWin(d.window);
-          seededRef.current = true;
-        }
-      }).catch(() => {});
-    load();
-    const t = setInterval(load, 30000);
-    return () => clearInterval(t);
-  }, []);
+    if (!ov) return;
+    setSysNow((prev) => prev || ov.system);
+    if (!seededRef.current && ov.window?.length) {
+      setWin(ov.window);
+      seededRef.current = true;
+    }
+  }, [ov]);
 
-  // Storage scan — first response may be pending, then it's cached server-side.
-  useEffect(() => {
-    let alive = true;
-    let timer;
-    const poll = () =>
-      api.systemStorage().then((d) => {
-        if (!alive) return;
-        setStorage(d);
-        timer = setTimeout(poll, d.pending ? 4000 : 60000);
-      }).catch(() => { timer = setTimeout(poll, 15000); });
-    poll();
-    return () => { alive = false; clearTimeout(timer); };
-  }, []);
+  // Storage scan — polls fast while the server-side scan is pending.
+  const { data: storage } = useQuery({
+    queryKey: ['sys', 'storage'],
+    queryFn: api.systemStorage,
+    refetchInterval: (q) => (q.state.data?.pending ? 4000 : 60000),
+  });
 
   // Live stream: 2s system + per-process samples.
   useEffect(() => {
@@ -111,22 +100,22 @@ export default function Statistics() {
     return () => { socket.send({ action: 'metrics:stop' }); socket.close(); };
   }, []);
 
-  // Selected month's persisted hourly aggregates.
-  useEffect(() => {
-    if (period === 'live') { setMonthSys(null); return; }
-    api.systemHistory(period).then((d) => setMonthSys(d.system || [])).catch(() => setMonthSys([]));
-  }, [period]);
+  // Selected month's persisted hourly aggregates — cached per month.
+  const { data: monthSysData } = useQuery({
+    queryKey: ['sys', 'history', period],
+    queryFn: () => api.systemHistory(period).then((d) => d.system || []),
+    enabled: period !== 'live',
+    staleTime: 5 * 60_000,
+  });
+  const monthSys = period !== 'live' ? monthSysData : null;
 
   // Per-project comparison — only while its tab is open; live refreshes every 30s.
-  useEffect(() => {
-    if (tab !== 'projects') return;
-    let alive = true;
-    setProjUsage(null);
-    const load = () => api.systemProjects(period).then((d) => alive && setProjUsage(d)).catch(() => {});
-    load();
-    const t = period === 'live' ? setInterval(load, 30000) : null;
-    return () => { alive = false; if (t) clearInterval(t); };
-  }, [tab, period]);
+  const { data: projUsage } = useQuery({
+    queryKey: ['sys', 'projects', period],
+    queryFn: () => api.systemProjects(period),
+    enabled: tab === 'projects',
+    refetchInterval: period === 'live' ? 30000 : false,
+  });
 
   const isLive = period === 'live';
   const sys = sysNow || ov?.system;

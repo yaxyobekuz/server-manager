@@ -6,13 +6,131 @@ import * as metrics from '../services/metrics.js';
 import * as pm2 from '../services/pm2.js';
 import * as store from '../store.js';
 import * as traffic from '../services/traffic.js';
+import * as domainScan from '../services/domainScan.js';
+import * as nginxSvc from '../services/nginx.js';
+import * as sysinfo from '../services/sysinfo.js';
 import { run } from '../services/exec.js';
+import { requirePerm } from '../auth.js';
 import { config } from '../config.js';
 
 const router = Router();
 
-router.get('/stats', (req, res) => {
+router.get('/stats', requirePerm('metrics'), (req, res) => {
   res.json({ system: metrics.systemStats() });
+});
+
+// Everything the Information page shows about the machine, plus panel counts.
+router.get('/info', requirePerm('serverInfo'), async (req, res) => {
+  try {
+    const info = await sysinfo.getInfo();
+    let procs = { total: 0, online: 0 };
+    try {
+      const list = await pm2.list();
+      procs = { total: list.length, online: list.filter((p) => p.status === 'online').length };
+    } catch {
+      /* pm2 down — the page still renders */
+    }
+    const projects = store.listProjects();
+    res.json({
+      ...info,
+      panel: {
+        projects: projects.length,
+        services: projects.reduce((n, p) => n + (p.services?.length || 0), 0),
+        pm2: procs,
+        port: config.port,
+        projectsRoot: config.projectsRoot,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// One speed-test phase (ping | download | upload) — the client runs them in
+// sequence so it can show per-phase progress. POST: it consumes real bandwidth.
+router.post('/speedtest/:phase', requirePerm('serverInfo'), async (req, res) => {
+  try {
+    res.json(await sysinfo.speedtest(req.params.phase));
+  } catch (err) {
+    res.status(err.busy ? 429 : 500).json({ error: err.message });
+  }
+});
+
+// Every domain the machine actually serves: nginx vhosts (panel-managed or
+// not) + Let's Encrypt certs, merged with panel attachments. Read-only scan.
+router.get('/domains', requirePerm('domainsGlobal'), (req, res) => {
+  try {
+    res.json(domainScan.scanDomains(req.query.refresh === '1'));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Full teardown of a scanned domain — removes exactly what the admin ticked:
+// ?nginx=1 deletes the vhost (config + enabled symlink, nginx reloaded),
+// ?cert=1 deletes the Let's Encrypt certificate. When the vhost goes away the
+// host is also detached from whichever panel service held it.
+router.delete('/domains/:host', requirePerm('domainsGlobal'), async (req, res) => {
+  const host = req.params.host;
+  const delNginx = req.query.nginx === '1';
+  const delCert = req.query.cert === '1';
+  if (!delNginx && !delCert) return res.status(400).json({ error: 'Nothing selected to delete' });
+  const found = domainScan.findHost(host, true);
+  if (!found) return res.status(404).json({ error: 'Domain not found in the scan' });
+
+  const steps = [];
+  if (delNginx) {
+    if (found.file) {
+      try {
+        await nginxSvc.deleteSite(found.file);
+        steps.push({ step: `nginx config (${found.file})`, ok: true, output: '' });
+      } catch (e) {
+        steps.push({ step: `nginx config (${found.file})`, ok: false, output: e.message });
+      }
+    } else {
+      steps.push({ step: 'nginx config', ok: true, output: 'none existed' });
+    }
+  }
+  if (delCert && found.cert) {
+    // A shared certificate (SANs covering other hosts) is a foot-gun: deleting
+    // it leaves the other hosts' configs pointing at a missing file and
+    // nginx -t fails server-wide. Require explicit confirmation.
+    const scanAll = domainScan.scanDomains();
+    const others = found.cert.hosts.filter(
+      (h) => h !== host && scanAll.domains.some((d) => d.host === h && d.file && !(delNginx && d.file === found.file))
+    );
+    if (others.length && req.query.force !== '1') {
+      return res.status(400).json({
+        error: `Certificate ${found.cert.name} also covers ${others.join(', ')} — deleting it breaks their HTTPS and can make nginx fail to reload. Confirm the shared-certificate warning to proceed.`,
+        sharedWith: others,
+      });
+    }
+  }
+  if (delCert) {
+    if (found.cert) {
+      const r = await nginxSvc.deleteHttps(found.cert.name);
+      steps.push({
+        step: `certificate (${found.cert.name})`,
+        ok: r.ok,
+        output: r.ok ? '' : r.output.trim().split('\n').slice(-4).join('\n'),
+      });
+    } else {
+      steps.push({ step: 'certificate', ok: true, output: 'none existed' });
+    }
+  }
+  if (delNginx) {
+    // the host is no longer served — drop it from whichever service holds it
+    for (const p of store.listProjects()) {
+      for (const s of p.services || []) {
+        if ((s.domains || []).some((d) => d.host === host)) {
+          store.updateService(s.id, { domains: s.domains.filter((d) => d.host !== host) });
+          steps.push({ step: `detached from ${p.name} / ${s.name}`, ok: true, output: '' });
+        }
+      }
+    }
+  }
+  domainScan.scanDomains(true); // the next page load shows reality
+  res.json({ ok: steps.every((s) => s.ok), steps });
 });
 
 /**
@@ -20,7 +138,7 @@ router.get('/stats', (req, res) => {
  * every pm2 process, panel counts, which pm2 names belong to panel services
  * (so the UI can link them), the live sample window and available months.
  */
-router.get('/overview', async (req, res) => {
+router.get('/overview', requirePerm('statistics'), async (req, res) => {
   let procs = [];
   try {
     procs = await pm2.list();
@@ -69,7 +187,7 @@ router.get('/overview', async (req, res) => {
  * (avg + peak) and the month's domain traffic totals.
  * Disk is always the current du of the project's service folders.
  */
-router.get('/projects', async (req, res) => {
+router.get('/projects', requirePerm('statistics'), async (req, res) => {
   const month = String(req.query.month || '');
   const isMonth = /^\d{4}-\d{2}$/.test(month);
   const projects = store.listProjects();
@@ -161,7 +279,7 @@ router.get('/projects', async (req, res) => {
 });
 
 /** System-wide hourly history for one month. */
-router.get('/history', (req, res) => {
+router.get('/history', requirePerm('statistics'), (req, res) => {
   const month = String(req.query.month || '');
   const system = metrics.getMonthSystem(month);
   if (system === null) return res.status(400).json({ error: 'month=YYYY-MM required' });
@@ -199,7 +317,7 @@ async function scanStorage() {
   return { scannedAt: Date.now(), root, folders };
 }
 
-router.get('/storage', (req, res) => {
+router.get('/storage', requirePerm('statistics'), (req, res) => {
   const fresh = storageCache && Date.now() - storageCache.scannedAt < STORAGE_TTL;
   if (!fresh && !storageScan) {
     storageScan = scanStorage()
@@ -218,7 +336,7 @@ router.get('/storage', (req, res) => {
 });
 
 // All pm2 processes on the box (used by the global "Processes" view).
-router.get('/processes', async (req, res) => {
+router.get('/processes', requirePerm('processes'), async (req, res) => {
   try {
     res.json({ processes: await pm2.list() });
   } catch (err) {
@@ -226,7 +344,7 @@ router.get('/processes', async (req, res) => {
   }
 });
 
-router.post('/processes/:id/:action', async (req, res) => {
+router.post('/processes/:id/:action', requirePerm('processControl'), async (req, res) => {
   const { id, action } = req.params;
   try {
     if (action === 'restart') await pm2.restart(id);

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { runStream } from './exec.js';
+import { parseEnv } from './env.js';
 import * as store from '../store.js';
 import { describe as pm2Describe } from './pm2.js';
 import { detectProject } from './detect.js';
@@ -33,7 +34,21 @@ const PANEL_ONLY_VARS = ['PORT', 'ADMIN_PASSWORD', 'JWT_SECRET', 'JWT_EXPIRES_IN
 export function serviceEnv(service) {
   const env = { ...process.env };
   for (const k of PANEL_ONLY_VARS) delete env[k];
-  Object.assign(env, service.variables || {});
+  // The .env FILE is the source of truth; the db copy only covers services
+  // that were never deployed (no folder yet).
+  let vars = service.variables || {};
+  const workdir = resolveWorkdir(service);
+  const file = workdir ? path.join(workdir, '.env') : '';
+  try {
+    if (file && fs.existsSync(file)) vars = parseEnv(fs.readFileSync(file, 'utf8'));
+  } catch {
+    /* unreadable — staged copy stays */
+  }
+  Object.assign(env, vars);
+  // The port set in Settings reaches the app even without a PORT line in
+  // .env — Next.js (`next start`), Express and friends all honor the env var.
+  // An explicit PORT in the service's .env still wins.
+  if (service.port && !('PORT' in vars)) env.PORT = String(service.port);
   return env;
 }
 
@@ -73,14 +88,22 @@ function resolveRuntime(service, workdir, log) {
   return { kind, buildCommand, startCommand, outputDir };
 }
 
-function writeEnvFile(service, workdir, log) {
+// .env belongs to the service folder — deploys never overwrite it. Only a
+// fresh clone (no .env yet) gets one seeded from the panel's staged copy.
+function ensureEnvFile(service, workdir, log) {
+  if (!workdir) return;
+  const file = path.join(workdir, '.env');
+  if (fs.existsSync(file)) {
+    log('==> Using the existing .env (source of truth — never overwritten)');
+    return;
+  }
   const vars = service.variables || {};
   const keys = Object.keys(vars);
-  if (!keys.length || !workdir) return;
+  if (!keys.length) return;
   const body = keys.map((k) => `${k}=${vars[k]}`).join('\n') + '\n';
   try {
-    fs.writeFileSync(path.join(workdir, '.env'), body);
-    log(`==> Wrote ${keys.length} variable(s) to .env`);
+    fs.writeFileSync(file, body);
+    log(`==> Created .env from panel variables (${keys.length})`);
   } catch (e) {
     log(`==> Could not write .env: ${e.message}`, 'stderr');
   }
@@ -167,8 +190,8 @@ export async function runDeployment(service, deployment, { trigger } = {}) {
   // 2. Resolve how to build/run (auto-detect fills blanks) ---------------
   const runtime = resolveRuntime(service, workdir, log);
 
-  // 3. Write env vars -----------------------------------------------------
-  writeEnvFile(service, workdir, log);
+  // 3. Ensure .env exists (seeded once; the file itself is the truth) ------
+  ensureEnvFile(service, workdir, log);
 
   // 4. Build --------------------------------------------------------------
   if (runtime.buildCommand && runtime.buildCommand.trim()) {
@@ -201,6 +224,12 @@ export async function runDeployment(service, deployment, { trigger } = {}) {
 
   const pm2Name = service.pm2Name || service.name;
   const startCmd = (runtime.startCommand || '').trim();
+
+  // `npm run dev` / `next dev` deploys "work" but run the slow dev server
+  // forever — flag it loudly instead of silently obliging.
+  if (/(\brun dev\b|\bnext dev\b|--turbopack|\bnodemon\b|\bvite\b(?!.*build))/.test(startCmd)) {
+    log(`==> Warning: start command "${startCmd}" looks like a DEV server. For production use the start script (e.g. "npm start").`, 'stderr');
+  }
 
   if (startCmd) {
     // pm2 `restart` re-runs whatever command the process was FIRST started
