@@ -167,11 +167,34 @@ export async function runDeployment(service, deployment, { trigger } = {}) {
     if (!repoExists) {
       log(`==> Cloning ${service.repoUrl} (${service.branch})`);
       if (!fs.existsSync(service.localPath)) fs.mkdirSync(service.localPath, { recursive: true });
+      // `git clone` refuses a non-empty destination. Variables saved before
+      // the first deploy may already have seeded .env there — set it aside
+      // for the clone and put it back after (the file stays source of truth).
+      const envPath = path.join(service.localPath, '.env');
+      let stashedEnv = null;
+      try {
+        const entries = fs.readdirSync(service.localPath);
+        if (entries.length && entries.every((e) => e === '.env')) {
+          stashedEnv = fs.readFileSync(envPath);
+          fs.unlinkSync(envPath);
+          log('==> Set the pre-seeded .env aside during the clone');
+        }
+      } catch {
+        /* unreadable — git will report the real problem */
+      }
       const code = await runStream(
         'git',
         ['clone', '-b', service.branch, service.repoUrl, service.localPath],
         {}, onLine
       );
+      if (stashedEnv) {
+        try {
+          fs.writeFileSync(envPath, stashedEnv);
+          log('==> Restored .env after the clone');
+        } catch (e) {
+          log(`==> Could not restore .env: ${e.message}`, 'stderr');
+        }
+      }
       if (code !== 0) return setStatus('failed');
     } else {
       log(`==> Pulling ${service.branch}`);

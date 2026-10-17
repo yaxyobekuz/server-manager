@@ -90,6 +90,17 @@ export function readServiceVariables(service) {
 export function writeServiceVariables(service, variables) {
   const file = envFileFor(service);
   if (!file || !fs.existsSync(path.dirname(file))) return { ok: false, path: file };
+  // A GitHub service that was never cloned: its folder (made at service
+  // creation) must stay EMPTY or `git clone` refuses the destination.
+  // Keep the variables staged in the db — the first deploy seeds .env.
+  if (
+    service?.sourceType === 'github' &&
+    service?.localPath &&
+    !fs.existsSync(path.join(service.localPath, '.git')) &&
+    !fs.existsSync(file)
+  ) {
+    return { ok: false, path: file };
+  }
   const existing = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
   const remaining = new Map(Object.entries(variables || {}));
   const out = [];
