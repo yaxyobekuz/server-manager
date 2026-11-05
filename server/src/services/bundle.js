@@ -190,7 +190,10 @@ export async function buildPlan(projectId, optionsInput = {}) {
     if (!exists) warnings.push(`${svc.name}: no folder on disk yet (${svc.localPath || 'no path set'}) — only its settings move`);
 
     const vars = envFile.readServiceVariables(svc).variables || {};
-    const dbs = options.databases ? dbtools.detectDatabases(vars) : [];
+    // Always detect, whatever the option says: a database that is NOT coming
+    // along is the single most useful thing to show before pressing the
+    // button, because the app will arrive unable to read anything.
+    const dbs = dbtools.detectDatabases(vars);
     const caches = dbtools.detectCaches(vars);
 
     plan.services.push({
@@ -211,14 +214,19 @@ export async function buildPlan(projectId, optionsInput = {}) {
       variableCount: Object.keys(vars).length,
       autoDeploy: Boolean(svc.autoDeploy),
       domains: (svc.domains || []).map((d) => ({ host: d.host, https: Boolean(d.https), port: d.port || null, root: d.root || null })),
-      databases: dbs.map((d) => ({ kind: d.kind, name: d.name, host: d.host, local: d.local, source: d.source, key: d.key })),
+      databases: dbs.map((d) => ({ kind: d.kind, name: d.name, host: d.host, local: d.local, included: Boolean(options.databases && d.local), source: d.source, key: d.key })),
       caches,
     });
 
     for (const d of dbs) {
-      plan.databases.push({ serviceSlug: slug, kind: d.kind, name: d.name, host: d.host, local: d.local, source: d.source, key: d.key });
+      const included = Boolean(options.databases && d.local);
+      plan.databases.push({ serviceSlug: slug, kind: d.kind, name: d.name, host: d.host, local: d.local, included, source: d.source, key: d.key });
       if (!d.local) {
         notes.push(`${svc.name}: ${d.kind} "${d.name}" lives on ${d.host} — left where it is, the moved app keeps using it`);
+      } else if (!included) {
+        warnings.push(
+          `${svc.name}: its ${d.source} points at the local ${d.kind} database "${d.name}", which this move leaves behind — turn Databases on, or move it yourself before the app runs there`
+        );
       }
     }
     if (caches.length && options.databases) {
@@ -230,7 +238,8 @@ export async function buildPlan(projectId, optionsInput = {}) {
     services: plan.services.length,
     bytes: plan.services.reduce((n, s) => n + s.bytes, 0),
     domains: plan.services.reduce((n, s) => n + s.domains.length, 0),
-    databases: plan.databases.filter((d) => d.local).length,
+    databases: plan.databases.filter((d) => d.included).length,
+    databasesLeftBehind: plan.databases.filter((d) => d.local && !d.included).length,
     autoDeploy: plan.services.filter((s) => s.autoDeploy).length,
   };
   return plan;
@@ -424,9 +433,9 @@ export function planFromManifest(manifest) {
       relPath: s.relPath,
       bytes: s.bytes,
       domains: s.domains || [],
-      databases: (manifest.databases || []).filter((d) => d.serviceSlug === s.slug).map((d) => ({ kind: d.kind, name: d.name, host: d.host, local: true })),
+      databases: (manifest.databases || []).filter((d) => d.serviceSlug === s.slug).map((d) => ({ kind: d.kind, name: d.name, host: d.host, local: true, included: true })),
     })),
-    databases: (manifest.databases || []).map((d) => ({ serviceSlug: d.serviceSlug, kind: d.kind, name: d.name, host: d.host, local: true })),
+    databases: (manifest.databases || []).map((d) => ({ serviceSlug: d.serviceSlug, kind: d.kind, name: d.name, host: d.host, local: true, included: true })),
     totals: {
       services: (manifest.services || []).length,
       bytes: (manifest.services || []).reduce((n, s) => n + (s.sourceBytes || s.bytes || 0), 0),

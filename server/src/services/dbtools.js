@@ -198,6 +198,43 @@ export function toolReport() {
 
 export const describeDb = (db) => `${db.kind} ${db.name}${db.local ? '' : ` @ ${db.host}`}`;
 
+/**
+ * Is a database server of this kind answering on this machine?
+ *
+ *   true  — it is up and taking connections
+ *   false — it is definitely not (nothing to restore into)
+ *   null  — cannot tell without credentials; never block on a guess
+ *
+ * Having the client binaries installed says nothing about a server running,
+ * and "psql is here but postgres is not" is exactly how an import ends up
+ * restoring nothing.
+ */
+export async function serverReachable(kind) {
+  if (kind === 'postgres') {
+    if (whichSync('pg_isready')) {
+      const r = await run('pg_isready', ['-q'], { timeout: 15000 });
+      if (r.code === 0) return true;
+      if (r.code === 1 || r.code === 2) return false; // rejecting / no response
+      return null; // 3 = bad invocation, or the binary blew up
+    }
+    const r = await run('sudo', ['-n', '-u', 'postgres', 'psql', '-tAc', 'select 1'], { timeout: 20000 });
+    return r.code === 0 ? true : null;
+  }
+  if (kind === 'mysql') {
+    if (!whichSync('mysqladmin')) return null;
+    const r = await run('mysqladmin', ['--connect-timeout=5', 'ping'], { timeout: 15000 });
+    if (r.code === 0) return true;
+    // "access denied" means a server answered; only a connection failure is a no.
+    return /can't connect|connection refused|no such file or directory/i.test(r.stderr + r.stdout) ? false : null;
+  }
+  if (kind === 'mongo') {
+    const r = await run('mongodump', ['--uri=mongodb://127.0.0.1:27017/admin', '--archive=/dev/null', '--quiet'], { timeout: 20000 });
+    if (r.code === 0) return true;
+    return /connection refused|no reachable servers|server selection/i.test(r.stderr + r.stdout) ? false : null;
+  }
+  return null;
+}
+
 /* -------------------------------------------------------------- utilities */
 
 function childToGzip(cmd, args, opts, outFile) {

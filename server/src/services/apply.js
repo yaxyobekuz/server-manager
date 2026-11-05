@@ -176,16 +176,33 @@ export async function preflight(plan, optionsInput = {}) {
     });
   }
 
-  // 6. database clients ---------------------------------------------------
+  // 6. databases: the client tools AND a server actually answering here ---
   const tools = dbtools.toolReport();
+  const incoming = (plan?.databases || []).filter((d) => d.included);
   if (options.databases) {
-    for (const db of (plan?.databases || []).filter((d) => d.local)) {
-      if (!tools[db.kind]) {
+    for (const kind of new Set(incoming.map((d) => d.kind))) {
+      const names = incoming.filter((d) => d.kind === kind).map((d) => d.name).join(', ');
+      if (!tools[kind]) {
         blocking.push({
           code: 'db-tool',
-          message: `this server has no ${db.kind} client (${dbtools.toolsFor(db.kind).restore}) — install it, or untick Databases and move "${db.name}" by hand`,
+          message: `this server has no ${kind} client (${dbtools.toolsFor(kind).restore}) — install it, or untick Databases and move ${names} by hand`,
+        });
+        continue;
+      }
+      if ((await dbtools.serverReachable(kind)) === false) {
+        blocking.push({
+          code: 'db-server',
+          message: `no ${kind} server is answering on this machine, so ${names} cannot be restored — start one first, or untick Databases`,
         });
       }
+    }
+  } else {
+    // The mistake that actually bites: the move leaves the database behind
+    // and the app arrives with nothing to read.
+    for (const db of (plan?.databases || []).filter((d) => d.local)) {
+      warnings.push(
+        `${db.name} (${db.kind}) is NOT coming along — Databases is off, so whatever reads it will start here against a missing database`
+      );
     }
   }
 
@@ -252,7 +269,9 @@ async function deployAndWait(service, log) {
     if (['success', 'failed', 'crashed', 'removed'].includes(row.status)) break;
   }
   if (row.status !== 'success') {
-    for (const l of (row.logs || []).filter((x) => x.stream === 'stderr').slice(-6)) log(`    ${l.line}`, 'warn');
+    // Raw build output stays plain log: the findings list is for what the
+    // panel itself concluded, not for a tail of someone's npm script.
+    for (const l of (row.logs || []).filter((x) => x.stream === 'stderr').slice(-6)) log(`    ${l.line}`);
   }
   return row;
 }
@@ -478,7 +497,9 @@ export async function applyBundle({ file, dir, options: optionsInput = {}, repor
             const res = await nginx.enableHttps({ domain: d.host });
             httpsOk = res.ok;
             if (res.ok) log(`    HTTPS ${res.reusedCert ? 'installed from the existing certificate' : 'issued'} ✓`);
-            else warn(`${d.host}: HTTPS not issued yet — point its DNS at this server, then press Repair in the Domains tab`);
+            // Not a warning: until the DNS points here no ACME challenge can
+            // succeed, so this is the expected state of every move.
+            else note(`${d.host}: still HTTP only — point its DNS at this server, then press Repair in its Domains tab`);
           }
           // https stays the stored WISH even when certbot could not run yet,
           // so Repair can finish the job later — same as a hand-added domain.

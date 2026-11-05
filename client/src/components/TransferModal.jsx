@@ -407,6 +407,9 @@ export default function TransferModal({ open, onClose, direction = 'push', proje
                   <span>{plan.totals.services} service(s)</span>
                   {Boolean(plan.totals.domains) && <span>{plan.totals.domains} domain(s)</span>}
                   {Boolean(plan.totals.databases) && <span>{plan.totals.databases} database(s)</span>}
+                  {Boolean(plan.totals.databasesLeftBehind) && (
+                    <span className="text-warn">{plan.totals.databasesLeftBehind} database(s) staying behind</span>
+                  )}
                   {inspecting && <span className="text-brand">updating…</span>}
                 </div>
                 <div className="space-y-1 mb-2">
@@ -416,7 +419,10 @@ export default function TransferModal({ open, onClose, direction = 'push', proje
                         {s.name}
                         {s.port ? <span className="text-muted"> · :{s.port}</span> : null}
                         {s.databases?.filter((d) => d.local).map((d) => (
-                          <span key={d.name} className="text-muted"> · {d.kind} {d.name}</span>
+                          <span key={d.name} className={d.included ? 'text-muted' : 'text-warn'}>
+                            {' '}· {d.kind} {d.name}
+                            {d.included ? '' : ' (stays behind)'}
+                          </span>
                         ))}
                       </span>
                       <span className="text-muted shrink-0">{fmtBytes(s.bytes)}</span>
