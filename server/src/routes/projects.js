@@ -4,8 +4,7 @@ import { Router } from 'express';
 import * as store from '../store.js';
 import { canProject, requirePerm } from '../auth.js';
 import { startDeployment } from '../services/deploy.js';
-import { teardownService, removeFolder } from '../services/teardown.js';
-import * as pm2 from '../services/pm2.js';
+import { bulkPm2, deleteProjectCompletely, projectProcesses } from '../services/projectOps.js';
 
 const router = Router();
 
@@ -62,48 +61,13 @@ router.put('/:id/created-at', requirePerm('editServices'), (req, res) => {
 });
 
 /* ------------------------------------------------------------- stop/start */
-// A project's runnable services are its non-static ones; static sites have
-// no process (nginx keeps serving them regardless).
-
-function runnableServices(project) {
-  return (project.services || []).filter((s) => (s.serviceKind || 'auto') !== 'static');
-}
 
 // Live pm2 state of the project's services — drives the Stop/Start buttons.
 router.get('/:id/processes', async (req, res) => {
   const project = store.getProject(req.params.id);
   if (!project) return res.status(404).json({ error: 'Project not found' });
-  const byName = new Map((await pm2.list()).map((p) => [p.name, p]));
-  res.json({
-    processes: runnableServices(project).map((s) => {
-      const name = s.pm2Name || s.name;
-      return { serviceId: s.id, service: s.name, pm2Name: name, status: byName.get(name)?.status || 'not running' };
-    }),
-  });
+  res.json({ processes: await projectProcesses(project) });
 });
-
-// Stop or start every pm2 process the project owns. Services that were never
-// deployed (no pm2 process yet) are skipped, not failed. The state is saved
-// so a stopped project stays stopped across server reboots.
-async function bulkPm2(project, verb) {
-  const byName = new Map((await pm2.list()).map((p) => [p.name, p]));
-  const results = [];
-  for (const s of runnableServices(project)) {
-    const name = s.pm2Name || s.name;
-    if (!byName.has(name)) {
-      results.push({ service: s.name, pm2Name: name, ok: true, skipped: true, output: 'no pm2 process (never deployed)' });
-      continue;
-    }
-    try {
-      await (verb === 'stop' ? pm2.stop(name) : pm2.start(name));
-      results.push({ service: s.name, pm2Name: name, ok: true });
-    } catch (e) {
-      results.push({ service: s.name, pm2Name: name, ok: false, output: e.message });
-    }
-  }
-  if (results.some((r) => r.ok && !r.skipped)) await pm2.save().catch(() => {});
-  return results;
-}
 
 router.post('/:id/stop', requirePerm('deploy'), async (req, res) => {
   const project = store.getProject(req.params.id);
@@ -196,13 +160,7 @@ router.delete('/:id', requirePerm('deleteServices'), async (req, res) => {
   const project = store.getProject(req.params.id);
   if (!project) return res.status(404).json({ error: 'Project not found' });
   try {
-    const cleanup = [];
-    for (const svc of project.services || []) {
-      cleanup.push({ service: svc.name, ...(await teardownService(svc)) });
-      store.deleteService(svc.id);
-    }
-    const folder = removeFolder(store.projectPath(project));
-    store.deleteProject(project.id);
+    const { cleanup, folder } = await deleteProjectCompletely(project);
     res.json({ ok: true, folder, cleanup });
   } catch (err) {
     res.status(500).json({ error: err.message });

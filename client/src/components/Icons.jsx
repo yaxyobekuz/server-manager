@@ -153,6 +153,31 @@ export const Icon = {
       <path {...s} d="M13 2L3 14h7l-1 8 10-12h-7l1-8z" />
     </svg>
   ),
+  server: (p) => (
+    <svg viewBox="0 0 24 24" width="18" height="18" {...p}>
+      <rect x="3" y="3.5" width="18" height="7" rx="2" {...s} />
+      <rect x="3" y="13.5" width="18" height="7" rx="2" {...s} />
+      <path {...s} d="M7 7h.01M7 17h.01" />
+    </svg>
+  ),
+  move: (p) => (
+    <svg viewBox="0 0 24 24" width="16" height="16" {...p}>
+      <path {...s} d="M3 7h11M10 3.5 13.5 7 10 10.5" />
+      <path {...s} d="M21 17H10m3.5-3.5L10 17l3.5 3.5" />
+    </svg>
+  ),
+  download: (p) => (
+    <svg viewBox="0 0 24 24" width="16" height="16" {...p}>
+      <path {...s} d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5" />
+      <path {...s} d="M4 20h16" />
+    </svg>
+  ),
+  upload: (p) => (
+    <svg viewBox="0 0 24 24" width="16" height="16" {...p}>
+      <path {...s} d="M12 16V4m0 0 4.5 4.5M12 4 7.5 8.5" />
+      <path {...s} d="M4 20h16" />
+    </svg>
+  ),
   pin: (p) => (
     <svg viewBox="0 0 24 24" width="15" height="15" {...p}>
       <path {...s} d="M12 17v5" />

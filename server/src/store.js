@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { config } from './config.js';
+import { seal, unseal } from './services/secretbox.js';
 
 /**
  * JSON-file backed store modelled after Railway:
@@ -30,9 +31,11 @@ function read() {
     data.services ||= [];
     data.deployments ||= [];
     data.admins ||= [];
+    data.servers ||= []; // other panels linked for project transfer
+    data.transfers ||= []; // project transfer history
     return data;
   } catch {
-    return { projects: [], services: [], deployments: [], admins: [] };
+    return { projects: [], services: [], deployments: [], admins: [], servers: [], transfers: [] };
   }
 }
 
@@ -176,11 +179,15 @@ export function getServicesByRepo(fullName) {
 // pm2 process names must be unique across the whole box, but service names
 // only need to be unique within their project ("server", "admin", ...), so
 // the process name is derived from both: <project-slug>-<service-slug>.
+export function pm2NameFrom(projectName, serviceName) {
+  const proj = slugify(projectName || 'project');
+  const svc = slugify(serviceName || 'service');
+  return svc === proj || svc.startsWith(`${proj}-`) ? svc : `${proj}-${svc}`;
+}
+
 const pm2NameFor = (db, service) => {
   const project = db.projects.find((p) => p.id === service.projectId);
-  const proj = slugify(project?.name || 'project');
-  const svc = slugify(service.name || 'service');
-  return svc === proj || svc.startsWith(`${proj}-`) ? svc : `${proj}-${svc}`;
+  return pm2NameFrom(project?.name, service.name);
 };
 
 export function createService(projectId, input = {}) {
@@ -444,6 +451,184 @@ export function deleteAdmin(adminId) {
   db.admins = db.admins.filter((x) => x.id !== adminId);
   write(db);
   return db.admins.length < before;
+}
+
+/* ----------------------------------------------------------------- Servers */
+// Other machines running this same panel, linked once by URL + their admin
+// password so projects can be moved between them. The password is stored
+// SEALED (see services/secretbox.js) because we must replay it to log in
+// again when the remote session token expires — the UI only ever sees
+// `hasPassword`.
+
+const publicServer = ({ password, ...rest }) => ({ ...rest, hasPassword: Boolean(password) });
+
+export function listServers() {
+  return read().servers.map(publicServer);
+}
+
+export function getServer(serverId) {
+  const s = read().servers.find((x) => x.id === serverId);
+  return s ? publicServer(s) : null;
+}
+
+/** Internal: the row WITH its decrypted password (null = cannot be opened). */
+export function getServerSecret(serverId) {
+  const s = read().servers.find((x) => x.id === serverId);
+  if (!s) return null;
+  return { ...s, password: s.password ? unseal(s.password) : null };
+}
+
+export function createServer({ name, url, password, insecure = false }) {
+  const db = read();
+  const server = {
+    id: id(),
+    name: String(name || '').trim() || url,
+    url: String(url || '').trim(),
+    password: password ? seal(password) : '',
+    insecure: Boolean(insecure),
+    info: null, // { hostname, panel, protocol, projectsRoot } from the last check
+    lastSeenAt: null,
+    lastError: '',
+    createdAt: now(),
+  };
+  db.servers.push(server);
+  write(db);
+  return publicServer(server);
+}
+
+export function updateServer(serverId, patch) {
+  const db = read();
+  const s = db.servers.find((x) => x.id === serverId);
+  if (!s) return null;
+  if ('name' in patch) s.name = String(patch.name || '').trim() || s.name;
+  if ('url' in patch && patch.url) s.url = String(patch.url).trim();
+  if ('insecure' in patch) s.insecure = Boolean(patch.insecure);
+  if (typeof patch.password === 'string' && patch.password) s.password = seal(patch.password);
+  if ('info' in patch) s.info = patch.info;
+  if ('lastSeenAt' in patch) s.lastSeenAt = patch.lastSeenAt;
+  if ('lastError' in patch) s.lastError = String(patch.lastError || '');
+  write(db);
+  return publicServer(s);
+}
+
+export function deleteServer(serverId) {
+  const db = read();
+  const before = db.servers.length;
+  db.servers = db.servers.filter((x) => x.id !== serverId);
+  write(db);
+  return db.servers.length < before;
+}
+
+/* --------------------------------------------------------------- Transfers */
+// Persisted history of project moves. The LIVE job (progress, streaming log)
+// lives in memory in services/transfer.js — only snapshots land here, so a
+// chatty transfer doesn't rewrite db.json on every line.
+
+const TRANSFER_HISTORY = 50;
+
+export function saveTransfer(row) {
+  const db = read();
+  const i = db.transfers.findIndex((t) => t.id === row.id);
+  if (i >= 0) db.transfers[i] = row;
+  else db.transfers.push(row);
+  db.transfers.sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
+  if (db.transfers.length > TRANSFER_HISTORY) db.transfers = db.transfers.slice(0, TRANSFER_HISTORY);
+  write(db);
+  return row;
+}
+
+export function listTransfers() {
+  return read().transfers;
+}
+
+export function getTransfer(transferId) {
+  return read().transfers.find((t) => t.id === transferId) || null;
+}
+
+export function deleteTransfer(transferId) {
+  const db = read();
+  const before = db.transfers.length;
+  db.transfers = db.transfers.filter((t) => t.id !== transferId);
+  write(db);
+  return db.transfers.length < before;
+}
+
+/**
+ * Recreate a whole project from a transfer bundle manifest, in ONE write:
+ * the project row, its services (with their new absolute paths and resolved
+ * ports) and — optionally — their deployment history. Ids are always fresh;
+ * everything else is carried over verbatim so the imported project looks
+ * exactly like the original.
+ */
+export function importProject({ project, services, deployments = [] }) {
+  const db = read();
+  const projectRow = {
+    id: id(),
+    name: project.name,
+    description: project.description || '',
+    path: project.path,
+    createdAt: validIso(project.createdAt) || now(),
+    createdAtHistory: Array.isArray(project.createdAtHistory) ? project.createdAtHistory : [],
+    ...(project.pinned ? { pinned: true } : {}),
+    importedAt: now(),
+  };
+  db.projects.push(projectRow);
+
+  const created = [];
+  const idBySlug = new Map();
+  for (const svc of services) {
+    const row = {
+      id: id(),
+      projectId: projectRow.id,
+      name: svc.name || 'service',
+      icon: svc.icon || 'box',
+      sourceType: svc.sourceType || 'github',
+      repoUrl: svc.repoUrl || '',
+      repoFullName: svc.repoFullName || '',
+      branch: svc.branch || 'main',
+      rootDirectory: svc.rootDirectory || '',
+      localPath: svc.localPath || '',
+      serviceKind: svc.serviceKind || 'auto',
+      buildCommand: svc.buildCommand || '',
+      startCommand: svc.startCommand || '',
+      staticOutputDir: svc.staticOutputDir || '',
+      pm2Name: '',
+      port: svc.port || '',
+      autoDeploy: Boolean(svc.autoDeploy),
+      domains: Array.isArray(svc.domains) ? svc.domains : [],
+      variables: svc.variables || {},
+      createdAt: validIso(svc.createdAt) || now(),
+      createdAtHistory: Array.isArray(svc.createdAtHistory) ? svc.createdAtHistory : [],
+      importedAt: now(),
+    };
+    // A pinned pm2 name belongs to a process that predates the panel's
+    // naming scheme — it must survive the move untouched. Everything else
+    // gets the local <project>-<service> name.
+    if (svc.pm2NamePinned && svc.pm2Name) {
+      row.pm2Name = svc.pm2Name;
+      row.pm2NamePinned = true;
+    } else {
+      row.pm2Name = pm2NameFor(db, row);
+    }
+    db.services.push(row);
+    created.push(row);
+    if (svc.slug) idBySlug.set(svc.slug, row.id);
+  }
+
+  for (const dep of deployments) {
+    const serviceId = idBySlug.get(dep.serviceSlug);
+    if (!serviceId) continue;
+    db.deployments.push({
+      ...dep,
+      id: id(),
+      serviceId,
+      serviceSlug: undefined,
+      imported: true,
+    });
+  }
+
+  write(db);
+  return { project: projectRow, services: created };
 }
 
 /* --------------------------------------------------------------- migration */

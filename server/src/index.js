@@ -21,6 +21,7 @@ import serviceRoutes from './routes/services.js';
 import systemRoutes from './routes/system.js';
 import githubRoutes from './routes/github.js';
 import adminRoutes from './routes/admins.js';
+import transferRoutes from './routes/transfer.js';
 
 // Last-resort safety net: never let a stray async error from a child process
 // or library (e.g. pm2 IPC) take the whole platform down. We log and continue.
@@ -60,6 +61,11 @@ app.use('/api/projects', requireAuth, projectRoutes);
 app.use('/api/services', requireAuth, serviceRoutes);
 app.use('/api/system', requireAuth, systemRoutes);
 app.use('/api/admins', requireAuth, requireOwner, adminRoutes);
+// Project transfer between two servers running this panel. Owner-only on
+// both sides: a bundle carries source code, .env files and database dumps,
+// and the other panel authenticates with nothing but this server's own
+// admin password — exactly what a human types into the login box.
+app.use('/api/transfer', requireAuth, requireOwner, transferRoutes);
 
 // --- Serve built client ---------------------------------------------------
 if (fs.existsSync(config.clientDist)) {

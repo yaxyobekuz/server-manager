@@ -11,6 +11,7 @@ const nav = [
   { to: '/statistics', label: 'Statistics', icon: Icon.chart, perm: 'statistics' },
   { to: '/processes', label: 'Processes', icon: Icon.cpu, perm: 'processes' },
   { to: '/terminal', label: 'Terminal', icon: Icon.terminal, perm: 'terminal' },
+  { to: '/servers', label: 'Servers', icon: Icon.server, ownerOnly: true },
   { to: '/admins', label: 'Admins', icon: Icon.shield, ownerOnly: true },
   { to: '/info', label: 'Information', icon: Icon.info, perm: 'serverInfo' },
 ];

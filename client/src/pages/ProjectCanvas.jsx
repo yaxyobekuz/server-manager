@@ -3,11 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client.js';
 import { Icon } from '../components/Icons.jsx';
-import { useMe, can } from '../lib/useMe.js';
+import { useMe, can, isOwner } from '../lib/useMe.js';
 import { timeAgo, DEPLOY_STATUS } from '../lib/format.js';
 import Modal from '../components/Modal.jsx';
 import NewServiceForm from '../components/NewServiceForm.jsx';
 import CreatedAtEditor from '../components/CreatedAtEditor.jsx';
+import TransferModal from '../components/TransferModal.jsx';
 
 export default function ProjectCanvas() {
   const { id } = useParams();
@@ -15,6 +16,7 @@ export default function ProjectCanvas() {
   const queryClient = useQueryClient();
   const [showNew, setShowNew] = useState(false);
   const [showCreated, setShowCreated] = useState(false);
+  const [moving, setMoving] = useState(false);
   const [powering, setPowering] = useState(null); // 'stop' | 'start'
   const [powerMsg, setPowerMsg] = useState('');
   const me = useMe();
@@ -123,6 +125,15 @@ export default function ProjectCanvas() {
               <Icon.play width={14} height={14} /> {powering === 'start' ? 'Starting…' : 'Start'}
             </button>
           )}
+          {isOwner(me) && (
+            <button
+              onClick={() => setMoving(true)}
+              className="btn-ghost text-muted hover:text-brand"
+              title="Move this whole project to another server"
+            >
+              <Icon.move /> Move
+            </button>
+          )}
           {can(me, 'deleteServices') && (
             <button onClick={deleteProject} className="btn-ghost text-muted hover:text-danger"><Icon.trash /></button>
           )}
@@ -174,6 +185,17 @@ export default function ProjectCanvas() {
           }}
         />
       </Modal>
+
+      <TransferModal
+        open={moving}
+        onClose={() => {
+          setMoving(false);
+          queryClient.invalidateQueries({ queryKey: ['projects'] });
+          queryClient.invalidateQueries({ queryKey: ['project', id] });
+        }}
+        direction="push"
+        project={project}
+      />
 
       <Modal open={showNew} onClose={() => setShowNew(false)} title="Deploy a new service" wide>
         <NewServiceForm

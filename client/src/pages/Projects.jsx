@@ -3,22 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client.js';
 import { Icon, StatusDot } from '../components/Icons.jsx';
-import { useMe, can } from '../lib/useMe.js';
+import { useMe, can, isOwner } from '../lib/useMe.js';
 import { timeAgo, DEPLOY_STATUS } from '../lib/format.js';
 import Modal from '../components/Modal.jsx';
-
-function Toggle({ on, onChange }) {
-  return (
-    <button
-      type="button"
-      onClick={onChange}
-      className={`relative w-9 h-5 rounded-full shrink-0 transition-colors ${on ? 'bg-brand' : 'bg-bg-hover border border-line'}`}
-      aria-pressed={on}
-    >
-      <span className={`absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full bg-white transition-all ${on ? 'left-[19px]' : 'left-[3px]'}`} />
-    </button>
-  );
-}
+import Toggle from '../components/Toggle.jsx';
+import TransferModal from '../components/TransferModal.jsx';
 
 /**
  * Copy a project: recreates every service (config + variables) under a new
@@ -115,11 +104,13 @@ export default function Projects() {
   const [error, setError] = useState('');
   const [menuFor, setMenuFor] = useState(null); // project id with the dropdown open
   const [copying, setCopying] = useState(null); // project being copied
+  const [moving, setMoving] = useState(null); // project being moved to another server
   const [query, setQuery] = useState('');
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const me = useMe();
   const canEdit = can(me, 'editServices');
+  const owner = isOwner(me);
 
   const { data, error: loadError } = useQuery({ queryKey: ['projects'], queryFn: api.projects });
   // Pinned projects float to the top; the stable sort keeps the original
@@ -247,7 +238,7 @@ export default function Projects() {
 
                   {menuFor === p.id && (
                     <div
-                      className="absolute right-4 top-12 z-20 card p-1.5 w-44 shadow-glow"
+                      className="absolute right-4 top-12 z-20 card p-1.5 w-56 shadow-glow"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <button
@@ -262,6 +253,14 @@ export default function Projects() {
                       >
                         <Icon.copy /> Copy project
                       </button>
+                      {owner && (
+                        <button
+                          onClick={() => { setMenuFor(null); setMoving(p); }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-300 hover:text-white hover:bg-bg-hover rounded-md transition"
+                        >
+                          <Icon.move /> Move to another server
+                        </button>
+                      )}
                     </div>
                   )}
 
@@ -298,6 +297,16 @@ export default function Projects() {
       </Modal>
 
       <CopyProjectModal project={copying} onClose={() => setCopying(null)} />
+
+      <TransferModal
+        open={Boolean(moving)}
+        onClose={() => {
+          setMoving(null);
+          queryClient.invalidateQueries({ queryKey: ['projects'] });
+        }}
+        direction="push"
+        project={moving}
+      />
     </div>
   );
 }

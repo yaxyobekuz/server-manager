@@ -12,6 +12,7 @@ import Statistics from './pages/Statistics.jsx';
 import TerminalPage from './pages/TerminalPage.jsx';
 import Domains from './pages/Domains.jsx';
 import Admins from './pages/Admins.jsx';
+import Servers from './pages/Servers.jsx';
 import InfoPage from './pages/InfoPage.jsx';
 
 export default function App() {
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="/statistics/:tab?" element={<Statistics />} />
         <Route path="/processes" element={<Processes />} />
         <Route path="/terminal" element={<TerminalPage />} />
+        <Route path="/servers" element={<Servers />} />
         <Route path="/admins" element={<Admins />} />
         <Route path="/info" element={<InfoPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

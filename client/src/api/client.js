@@ -73,6 +73,20 @@ export const api = {
   domainStatus: (id) => request('GET', `/services/${id}/domains/status`),
   repairDomain: (id, host) => request('POST', `/services/${id}/domains/${encodeURIComponent(host)}/repair`),
 
+  // Transfer — moving a project to/from another server running this panel
+  transferServers: () => request('GET', '/transfer/servers'),
+  addTransferServer: (s) => request('POST', '/transfer/servers', s),
+  updateTransferServer: (id, s) => request('PATCH', `/transfer/servers/${id}`, s),
+  deleteTransferServer: (id) => request('DELETE', `/transfer/servers/${id}`),
+  checkTransferServer: (id) => request('POST', `/transfer/servers/${id}/check`),
+  transferCatalog: (id) => request('GET', `/transfer/servers/${id}/catalog`),
+  transferInspect: (payload) => request('POST', '/transfer/inspect', payload),
+  transferStart: (payload) => request('POST', '/transfer/start', payload),
+  transferJobs: () => request('GET', '/transfer/jobs'),
+  transferJob: (id, since = 0) => request('GET', `/transfer/jobs/${id}?since=${since}`),
+  transferRelease: (id) => request('POST', `/transfer/jobs/${id}/release`),
+  deleteTransferJob: (id) => request('DELETE', `/transfer/jobs/${id}`),
+
   // System
   systemStats: () => request('GET', '/system/stats'),
   systemDomains: (refresh) => request('GET', `/system/domains${refresh ? '?refresh=1' : ''}`),
