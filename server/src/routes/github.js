@@ -33,18 +33,31 @@ router.post('/webhook', (req, res) => {
   const pushedBranch = (payload.ref || '').replace('refs/heads/', '');
   const head = payload.head_commit;
 
-  const service = store.getServiceByRepo(fullName);
-  if (!service) return res.json({ ok: true, message: `No service for ${fullName}` });
-  if (!service.autoDeploy) return res.json({ ok: true, message: 'Auto-deploy disabled' });
-  if (service.branch && pushedBranch && service.branch !== pushedBranch) {
-    return res.json({ ok: true, message: `Branch ${pushedBranch} ignored` });
+  // One repo can feed several services (a copied project reuses the same
+  // repoFullName), so deploy EVERY matching service, not just the first.
+  const services = store.getServicesByRepo(fullName);
+  if (!services.length) return res.json({ ok: true, message: `No service for ${fullName}` });
+
+  const commit = head
+    ? { hash: head.id?.slice(0, 7), subject: head.message?.split('\n')[0] }
+    : null;
+
+  const deploying = [];
+  const skipped = [];
+  for (const service of services) {
+    if (!service.autoDeploy) {
+      skipped.push({ id: service.id, reason: 'auto-deploy disabled' });
+      continue;
+    }
+    if (service.branch && pushedBranch && service.branch !== pushedBranch) {
+      skipped.push({ id: service.id, reason: `branch ${pushedBranch} ignored` });
+      continue;
+    }
+    deploying.push(service.id);
+    startDeployment(service, { trigger: 'github', commit });
   }
 
-  res.json({ ok: true, deploying: service.id });
-  startDeployment(service, {
-    trigger: 'github',
-    commit: head ? { hash: head.id?.slice(0, 7), subject: head.message?.split('\n')[0] } : null,
-  });
+  res.json({ ok: true, deploying, skipped });
 });
 
 export default router;

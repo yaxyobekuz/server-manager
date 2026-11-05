@@ -160,6 +160,18 @@ export function getServiceByRepo(fullName) {
   return s ? withLatestDeployment(db, s) : null;
 }
 
+// A single repo may be wired into several services — e.g. a project copied
+// from another keeps the same repoFullName. A webhook push must reach them
+// ALL, not just the first match, so this returns every service for the repo.
+export function getServicesByRepo(fullName) {
+  if (!fullName) return [];
+  const db = read();
+  const wanted = fullName.toLowerCase();
+  return db.services
+    .filter((x) => (x.repoFullName || '').toLowerCase() === wanted)
+    .map((s) => withLatestDeployment(db, s));
+}
+
 // pm2 process name is always derived from the service name — never user-set.
 // pm2 process names must be unique across the whole box, but service names
 // only need to be unique within their project ("server", "admin", ...), so
