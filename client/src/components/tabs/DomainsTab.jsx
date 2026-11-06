@@ -138,7 +138,10 @@ export default function DomainsTab({ service, onChange }) {
           {(service.domains || []).length === 0 && <p className="text-sm text-muted">No domains yet.</p>}
           {(service.domains || []).map((d) => {
             const stat = statuses[d.host];
-            const sslBroken = d.https && stat && !stat.ssl;
+            // With TLS terminated in front of nginx there is no certificate
+            // here to be broken — and nothing Repair could fix.
+            const upstreamTls = Boolean(stat?.tlsUpstream);
+            const sslBroken = d.https && stat && !stat.ssl && !upstreamTls;
             const confBroken = stat && (!stat.confExists || !stat.enabled);
             const days = stat?.certDaysLeft;
             const sslChipCls = days != null && days <= 7
@@ -157,7 +160,15 @@ export default function DomainsTab({ service, onChange }) {
                     <span className="text-xs text-muted shrink-0">→ {d.root || `:${d.port}`}</span>
                     {confBroken && <span className="chip bg-danger/10 border-danger/30 text-danger shrink-0">config missing</span>}
                     {!confBroken && sslBroken && <span className="chip bg-danger/10 border-danger/30 text-danger shrink-0">SSL broken</span>}
-                    {!confBroken && !sslBroken && d.https && (
+                    {!confBroken && upstreamTls && (
+                      <span
+                        className="chip bg-ok/10 border-ok/30 text-ok shrink-0"
+                        title="HTTPS is terminated by the proxy in front of this server, so no certificate lives here"
+                      >
+                        HTTPS · at the proxy
+                      </span>
+                    )}
+                    {!confBroken && !sslBroken && !upstreamTls && d.https && (
                       <span className={`chip ${sslChipCls} shrink-0`} title={days != null ? `Certificate expires in ${days} days` : ''}>
                         SSL{days != null ? ` · ${days}d` : ''}
                       </span>

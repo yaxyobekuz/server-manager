@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import * as store from '../store.js';
+import { config } from '../config.js';
 
 /**
  * Server-wide domain inventory, read from what the machine actually has:
@@ -11,6 +12,13 @@ import * as store from '../store.js';
  *
  * Read-only: scanning never touches nginx or certbot. Attaching a found
  * domain to a service ("adopt") is a db-only write in the services routes.
+ *
+ * When TLS is terminated BEFORE nginx (NGINX_UPSTREAM_TLS — a host-level
+ * reverse proxy or CDN owns 443), no vhost here will ever hold a 443 block
+ * and no certificate will ever live on this machine. Reporting those sites
+ * as plain HTTP would mark every one of them broken and send the operator
+ * to a Repair button that cannot change anything, so each entry carries
+ * `tlsUpstream` and counts as served over HTTPS.
  */
 
 const SITES_AVAILABLE = '/etc/nginx/sites-available';
@@ -86,7 +94,7 @@ function scanConfs() {
       }
     }
     for (const [host, info] of perFile) {
-      const entry = { file, enabled, managed, ...info };
+      const entry = { file, enabled, managed, ...info, ssl: config.nginx.upstreamTls || info.ssl };
       const prev = byHost.get(host);
       // A host can appear in several files (backups, www aliases) — the
       // enabled conf is the one nginx actually serves.
@@ -187,6 +195,7 @@ export function scanDomains(force = false) {
       enabled: conf.enabled,
       managed: conf.managed,
       ssl: conf.ssl,
+      tlsUpstream: config.nginx.upstreamTls,
       port: conf.port,
       root: conf.root,
       cert: certByHost.get(host) || null,
@@ -205,6 +214,7 @@ export function scanDomains(force = false) {
       enabled: false,
       managed: false,
       ssl: false,
+      tlsUpstream: config.nginx.upstreamTls,
       port: null,
       root: null,
       cert,
@@ -217,7 +227,7 @@ export function scanDomains(force = false) {
   const counts = {
     total: domains.length,
     active: domains.filter((d) => d.enabled).length,
-    https: domains.filter((d) => d.ssl && d.cert && d.cert.daysLeft > 0).length,
+    https: domains.filter((d) => d.tlsUpstream || (d.ssl && d.cert && d.cert.daysLeft > 0)).length,
     attached: domains.filter((d) => d.service).length,
     unattached: domains.filter((d) => !d.service).length,
     expiring: domains.filter((d) => d.cert && d.cert.daysLeft <= 21).length,

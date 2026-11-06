@@ -13,10 +13,12 @@ import { timeAgo } from '../lib/format.js';
  * working nginx config and certificate are never touched.
  */
 
+// With TLS terminated before nginx (a host-level proxy or CDN owns 443) no
+// certificate lives on this machine, so a missing one is not a problem.
 const isIssue = (d) =>
   !d.file ||
   (d.file && !d.enabled) ||
-  (d.ssl && (!d.cert || d.cert.daysLeft <= 21)) ||
+  (!d.tlsUpstream && d.ssl && (!d.cert || d.cert.daysLeft <= 21)) ||
   (d.cert && d.cert.daysLeft <= 21);
 
 const FILTERS = [
@@ -28,6 +30,16 @@ const FILTERS = [
 ];
 
 function SslChip({ d }) {
+  if (d.tlsUpstream) {
+    return (
+      <span
+        className="chip bg-ok/10 border-ok/30 text-ok shrink-0"
+        title="HTTPS is terminated by the proxy in front of this server — no certificate is kept here"
+      >
+        HTTPS · at the proxy
+      </span>
+    );
+  }
   if (!d.ssl && !d.cert) return <span className="chip bg-bg-hover border-line text-muted shrink-0">HTTP</span>;
   if (d.ssl && d.cert) {
     const days = d.cert.daysLeft;

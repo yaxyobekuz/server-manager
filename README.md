@@ -119,6 +119,57 @@ Safety rules worth knowing:
 Databases on the old server are left in place after a move — drop them
 yourself once you trust the new copy.
 
+## HTTPS when port 80 is not yours
+
+By default a domain gets its certificate through certbot's nginx/HTTP-01
+challenge, which needs port 80 of the public name to reach this nginx. That
+fails — silently, with "still HTTP only" — when something in front owns the
+ports: a proxying CDN (Cloudflare's orange cloud), a NAT box, a host-level
+reverse proxy, or a provider that intercepts 80/443.
+
+Point the panel at a certbot DNS plugin and ownership is proven with a DNS
+TXT record instead, so **Add a domain** and **Repair** work regardless of how
+inbound HTTP is routed (and wildcards become possible):
+
+```bash
+apt install python3-certbot-dns-cloudflare        # or your DNS provider's plugin
+# server/.env
+CERTBOT_DNS_PLUGIN=cloudflare
+CERTBOT_DNS_CREDENTIALS=/root/.secrets/cloudflare.ini   # chmod 600
+```
+
+A certificate already in `/etc/letsencrypt` is still just installed, offline,
+without asking any ACME server — so a domain re-attached after a move needs
+no challenge at all.
+
+### A domain shows the panel instead of the app
+
+Its vhost exists and `nginx -t` is happy, yet the hostname serves the Deploy
+panel. That means the request never reached that vhost — nginx answered from
+a different server block, the `default_server` of whichever listener the
+request actually arrived on. Two ways that happens:
+
+- **the vhost listens somewhere else.** Something in front forwards to one
+  address (say `10.0.0.5:8080`) while the vhost says `listen 80`, so the
+  handoff listener's default block — usually the panel's — takes every
+  hostname. Set `NGINX_LISTEN` (below) and press **Repair** on each domain:
+  the panel rewrites the block on the right listener.
+- **no 443 block while TLS ends here.** Without a certificate of its own the
+  name has nothing to match on port 443, so nginx falls back to the first
+  server block that does terminate TLS. Give the domain HTTPS (above).
+
+Which one it is takes one command — ask the listener directly, with the
+hostname in the Host header, and see who answers:
+
+```bash
+curl -s -o /dev/null -w '%{http_code} %{size_download}b\n' \
+     -H 'Host: app.example.com' http://10.0.0.5:8080/
+```
+
+A response the size of the panel's `index.html` for every hostname is the
+first case; the app's own answer means nginx is routing correctly and
+anything still wrong is in front of this server.
+
 ## Security note
 
 The platform runs commands on your server (git, pm2, nginx, certbot — the last

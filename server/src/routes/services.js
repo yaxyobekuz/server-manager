@@ -354,6 +354,9 @@ router.get('/:id/domains/status', requirePerm('domainsService'), (req, res) => {
         host: d.host,
         https: Boolean(d.https),
         ...real,
+        // Where TLS actually ends: with a proxy in front there is nothing
+        // here to repair, and the UI must not claim the SSL is broken.
+        tlsUpstream: Boolean(scan?.tlsUpstream),
         managed: scan?.file ? scan.managed : true,
         certDaysLeft: scan?.cert?.daysLeft ?? null,
       };
