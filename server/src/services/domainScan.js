@@ -96,9 +96,19 @@ function scanConfs() {
     for (const [host, info] of perFile) {
       const entry = { file, enabled, managed, ...info, ssl: config.nginx.upstreamTls || info.ssl };
       const prev = byHost.get(host);
-      // A host can appear in several files (backups, www aliases) — the
-      // enabled conf is the one nginx actually serves.
-      if (!prev || (entry.enabled && !prev.enabled)) byHost.set(host, entry);
+      // A host can appear in several files (backups, www aliases, a separate
+      // handoff listener) — report the one that describes how it is really
+      // served: enabled first, then the block that terminates TLS, then the
+      // one that actually has a target. Otherwise a host whose HTTPS lives
+      // in its own file reads as plain HTTP because another file mentioned
+      // it first.
+      const better =
+        !prev ||
+        (entry.enabled && !prev.enabled) ||
+        (entry.enabled === prev.enabled && entry.ssl && !prev.ssl) ||
+        (entry.enabled === prev.enabled && entry.ssl === prev.ssl &&
+          (entry.port || entry.root) && !(prev.port || prev.root));
+      if (better) byHost.set(host, entry);
     }
   }
   return byHost;

@@ -145,30 +145,28 @@ no challenge at all.
 ### A domain shows the panel instead of the app
 
 Its vhost exists and `nginx -t` is happy, yet the hostname serves the Deploy
-panel. That means the request never reached that vhost — nginx answered from
-a different server block, the `default_server` of whichever listener the
-request actually arrived on. Two ways that happens:
+panel. The request never reached that vhost: nginx answered from a different
+server block — the `default_server` of the listener the request arrived on.
+Almost always this means **the domain has no certificate yet**. Browsers go
+to 443, the vhost only has a port 80 block, so nginx falls back to the first
+block that does terminate TLS, which on most boxes is the panel's own. Give
+the domain HTTPS (above) and it starts matching by SNI.
 
-- **the vhost listens somewhere else.** Something in front forwards to one
-  address (say `10.0.0.5:8080`) while the vhost says `listen 80`, so the
-  handoff listener's default block — usually the panel's — takes every
-  hostname. Set `NGINX_LISTEN` (below) and press **Repair** on each domain:
-  the panel rewrites the block on the right listener.
-- **no 443 block while TLS ends here.** Without a certificate of its own the
-  name has nothing to match on port 443, so nginx falls back to the first
-  server block that does terminate TLS. Give the domain HTTPS (above).
-
-Which one it is takes one command — ask the listener directly, with the
-hostname in the Host header, and see who answers:
+The panel's log format makes this visible: the request shows up in ANOTHER
+domain's access log, under its own hostname.
 
 ```bash
-curl -s -o /dev/null -w '%{http_code} %{size_download}b\n' \
-     -H 'Host: app.example.com' http://10.0.0.5:8080/
+grep -l app.example.com /var/log/nginx/sm-*.access.log
+# a hit in sm-<other-domain>.access.log = that block answered for you
 ```
 
-A response the size of the panel's `index.html` for every hostname is the
-first case; the app's own answer means nginx is routing correctly and
-anything still wrong is in front of this server.
+The rarer cause is a vhost listening where traffic does not arrive: when
+something in front forwards to an internal address, `NGINX_LISTEN` has to
+match it exactly. Set it only if you know that is your setup — pointing
+project vhosts at a handoff listener while the public 443 really lands on
+this nginx takes every domain offline. To see where traffic actually comes
+in, compare `/var/log/nginx/access.log` (real client IPs = direct) with the
+handoff listener's own log.
 
 ## Security note
 
