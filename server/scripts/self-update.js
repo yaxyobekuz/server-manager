@@ -168,7 +168,10 @@ async function main() {
 
   // A hard reset is how this panel deploys every other project, so it is how
   // it deploys itself — but say out loud what that throws away first.
-  const dirty = (await git('status', '--porcelain')).split('\n').filter(Boolean);
+  // Untrimmed: a worktree-only change starts with a space (" M path").
+  const dirty = (await run('git', ['status', '--porcelain'], { cwd: ROOT })).stdout
+    .split('\n')
+    .filter((l) => l.length);
   const tracked = dirty.filter((l) => !l.startsWith('??'));
   if (tracked.length) {
     log('Local edits that this update discards (tracked files):', 'err');

@@ -22,6 +22,14 @@ const STATE = path.join(config.dataDir, 'self-update.json');
 const git = async (...args) => (await run('git', args, { cwd: config.rootDir })).stdout.trim();
 
 /**
+ * Lines of output, untrimmed. `git status --porcelain` puts the status in the
+ * first two columns, so a worktree-only change starts with a SPACE (" M path")
+ * — trimming the output would eat it and shift every path by one character.
+ */
+const gitLines = async (...args) =>
+  (await run('git', args, { cwd: config.rootDir })).stdout.split('\n').filter((l) => l.length);
+
+/**
  * Which pm2 process is this panel. pm2 injects `name` and `pm_id` into every
  * app it starts, so under pm2 we know it for certain; PANEL_PM2_NAME is the
  * escape hatch for an unusual setup, and the default covers a dev run.
@@ -64,7 +72,7 @@ function panelVersion() {
 export async function repoState() {
   const remote = await git('config', '--get', 'remote.origin.url');
   const sha = await git('rev-parse', 'HEAD');
-  const dirty = (await git('status', '--porcelain')).split('\n').filter(Boolean);
+  const dirty = await gitLines('status', '--porcelain');
   return {
     root: config.rootDir,
     branch: await currentBranch(),
