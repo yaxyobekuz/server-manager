@@ -19,12 +19,37 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { config } from '../src/config.js';
 import { run, runStream } from '../src/services/exec.js';
 
 const ROOT = config.rootDir;
 const LOG = path.join(config.dataDir, 'self-update.log');
 const STATE = path.join(config.dataDir, 'self-update.json');
+
+/**
+ * Step zero: get out from under the panel.
+ *
+ * pm2 kills an app's whole process TREE, and it finds that tree by walking
+ * parent pids — so starting in a new session is not enough. While this
+ * script is still a child of the panel, `pm2 restart` takes it down together
+ * with its parent and the job ends with nothing written. So the first
+ * instance re-spawns itself and exits immediately: the second instance is
+ * re-parented to init, is nobody's child, and survives the restart.
+ */
+if (process.env.SU_DETACHED !== '1') {
+  const fd = fs.openSync(LOG, 'a');
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url)], {
+    cwd: ROOT,
+    detached: true,
+    stdio: ['ignore', fd, fd],
+    env: { ...process.env, SU_DETACHED: '1' },
+  });
+  fs.closeSync(fd);
+  child.unref();
+  process.exit(0);
+}
 
 const trigger = process.env.SU_TRIGGER || 'manual';
 const force = process.env.SU_FORCE === '1';

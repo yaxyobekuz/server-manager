@@ -48,7 +48,7 @@ router.post('/webhook', async (req, res) => {
     // 409 is the honest answer when one update is already running: GitHub
     // shows the failed delivery and the push is not silently dropped.
     if (!started.ok) return res.status(409).json({ ok: false, panel: true, error: started.error });
-    return res.json({ ok: true, panel: true, updating: true, pid: started.pid });
+    return res.json({ ok: true, panel: true, updating: true });
   }
 
   // One repo can feed several services (a copied project reuses the same

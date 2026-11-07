@@ -141,9 +141,14 @@ export function status({ logLines = 200 } = {}) {
   }
   // The helper is a separate process: if it died without writing an ending —
   // OOM, a kill, a crash before its own error handler — say so instead of
-  // showing a spinner that never stops.
-  if (job?.status === 'running' && job.pid && !alive(job.pid)) {
-    job = { ...job, status: 'failed', error: job.error || 'the updater stopped unexpectedly', orphaned: true };
+  // showing a spinner that never stops. `pid` appears only once the helper
+  // has re-parented itself and written its own state, so before that we fall
+  // back to a grace period rather than reading the launcher's dead pid.
+  if (job?.status === 'running') {
+    const gone = job.pid ? !alive(job.pid) : Date.now() - Date.parse(job.startedAt) > 60_000;
+    if (gone) {
+      job = { ...job, status: 'failed', error: job.error || 'the updater stopped unexpectedly', orphaned: true };
+    }
   }
   let log = '';
   try {
@@ -189,13 +194,14 @@ export function start({ trigger = 'manual', force = false } = {}) {
   child.unref();
 
   // Seed the state file so a poll between now and the helper's first write
-  // already sees a running job.
+  // already sees a running job. No pid: child.pid belongs to the launcher,
+  // which exits within milliseconds (see self-update.js, "step zero"), and a
+  // dead pid here would read as an updater that crashed.
   const seed = {
     status: 'running',
     step: 'start',
     trigger,
     force,
-    pid: child.pid,
     startedAt: new Date().toISOString(),
     finishedAt: null,
   };
@@ -204,5 +210,5 @@ export function start({ trigger = 'manual', force = false } = {}) {
   } catch {
     /* the helper writes its own state a moment later */
   }
-  return { ok: true, pid: child.pid, trigger, force };
+  return { ok: true, launcherPid: child.pid, trigger, force };
 }
