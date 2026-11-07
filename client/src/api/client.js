@@ -99,6 +99,7 @@ export const api = {
   systemStorage: () => request('GET', '/system/storage'),
   systemInfo: () => request('GET', '/system/info'),
   speedtest: (phase) => request('POST', `/system/speedtest/${phase}`),
+  githubWebhook: () => request('GET', '/system/webhook'),
   processes: () => request('GET', '/system/processes'),
   processAction: (id, action) => request('POST', `/system/processes/${id}/${action}`),
 };

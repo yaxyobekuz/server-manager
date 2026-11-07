@@ -13,6 +13,7 @@ import TerminalPage from './pages/TerminalPage.jsx';
 import Domains from './pages/Domains.jsx';
 import Admins from './pages/Admins.jsx';
 import Servers from './pages/Servers.jsx';
+import SettingsPage from './pages/SettingsPage.jsx';
 import InfoPage from './pages/InfoPage.jsx';
 
 export default function App() {
@@ -37,6 +38,7 @@ export default function App() {
         <Route path="/terminal" element={<TerminalPage />} />
         <Route path="/servers" element={<Servers />} />
         <Route path="/admins" element={<Admins />} />
+        <Route path="/settings" element={<SettingsPage />} />
         <Route path="/info" element={<InfoPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

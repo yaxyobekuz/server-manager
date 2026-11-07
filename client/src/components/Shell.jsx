@@ -13,6 +13,7 @@ const nav = [
   { to: '/terminal', label: 'Terminal', icon: Icon.terminal, perm: 'terminal' },
   { to: '/servers', label: 'Servers', icon: Icon.server, ownerOnly: true },
   { to: '/admins', label: 'Admins', icon: Icon.shield, ownerOnly: true },
+  { to: '/settings', label: 'Settings', icon: Icon.settings, ownerOnly: true },
   { to: '/info', label: 'Information', icon: Icon.info, perm: 'serverInfo' },
 ];
 

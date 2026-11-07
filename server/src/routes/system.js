@@ -10,7 +10,7 @@ import * as domainScan from '../services/domainScan.js';
 import * as nginxSvc from '../services/nginx.js';
 import * as sysinfo from '../services/sysinfo.js';
 import { run } from '../services/exec.js';
-import { requirePerm } from '../auth.js';
+import { requirePerm, requireOwner } from '../auth.js';
 import { config } from '../config.js';
 
 const router = Router();
@@ -44,6 +44,46 @@ router.get('/info', requirePerm('serverInfo'), async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Everything GitHub's "Add webhook" form asks for, shown in the open, plus
+// the repos it has to be pasted into. Owner-only: the secret is the only
+// thing that makes a push trusted, so a created admin never sees it.
+router.get('/webhook', requireOwner, (req, res) => {
+  // One webhook belongs to a repo, not to a service — and one repo can feed
+  // several services (a copied project keeps the same repoFullName), so the
+  // list is grouped by repo.
+  const repos = new Map();
+  for (const project of store.listProjects()) {
+    for (const svc of project.services || []) {
+      if (svc.sourceType !== 'github' || !svc.repoFullName) continue;
+      const key = svc.repoFullName.toLowerCase();
+      if (!repos.has(key)) {
+        repos.set(key, {
+          fullName: svc.repoFullName,
+          settingsUrl: `https://github.com/${svc.repoFullName}/settings/hooks`,
+          services: [],
+        });
+      }
+      repos.get(key).services.push({
+        project: project.name,
+        name: svc.name,
+        branch: svc.branch || '',
+        autoDeploy: Boolean(svc.autoDeploy),
+      });
+    }
+  }
+
+  res.json({
+    path: '/api/github/webhook',
+    secret: config.githubWebhookSecret || '',
+    configured: Boolean(config.githubWebhookSecret),
+    contentType: 'application/json',
+    event: 'push',
+    envVar: 'GITHUB_WEBHOOK_SECRET',
+    envFile: 'server/.env',
+    repos: [...repos.values()].sort((a, b) => a.fullName.localeCompare(b.fullName)),
+  });
 });
 
 // One speed-test phase (ping | download | upload) — the client runs them in
