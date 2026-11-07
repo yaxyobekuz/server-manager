@@ -4,6 +4,7 @@ import { api } from '../api/client.js';
 import { Icon } from '../components/Icons.jsx';
 import { useMe, isOwner } from '../lib/useMe.js';
 import PanelUpdateCard from '../components/PanelUpdateCard.jsx';
+import { copyText } from '../lib/clipboard.js';
 
 /**
  * Owner-only panel settings: updating the panel itself, and the GitHub
@@ -210,27 +211,3 @@ function RepoList({ repos }) {
   );
 }
 
-/* ---------------------------------------------------------------- helpers */
-
-/** navigator.clipboard needs a secure context; fall back when there is none. */
-async function copyText(text) {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.setAttribute('readonly', '');
-      ta.style.position = 'fixed';
-      ta.style.top = '-1000px';
-      document.body.appendChild(ta);
-      ta.select();
-      const ok = document.execCommand('copy');
-      document.body.removeChild(ta);
-      return ok;
-    } catch {
-      return false;
-    }
-  }
-}

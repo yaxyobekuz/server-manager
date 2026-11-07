@@ -14,7 +14,7 @@ import * as metrics from './services/metrics.js';
 import * as traffic from './services/traffic.js';
 import * as store from './store.js';
 import { serviceEnv } from './services/deploy.js';
-import { openTerminal } from './services/terminal.js';
+import * as terminal from './services/terminal.js';
 
 import projectRoutes from './routes/projects.js';
 import serviceRoutes from './routes/services.js';
@@ -116,6 +116,30 @@ wss.on('connection', (ws, req) => {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type, ...data }));
   };
 
+  // A session id is a capability: only the identity that opened a shell may
+  // attach to it again.
+  const ownerKey = auth.role === 'owner' ? 'owner' : `admin:${auth.adminId}`;
+
+  /**
+   * Keep the connection from going idle.
+   *
+   * A terminal at a prompt and a log view with nothing new both send zero
+   * bytes for minutes, and every proxy in front of this panel — nginx, the
+   * host reverse proxy, Cloudflare — closes an idle WebSocket after a minute
+   * or two. A ping is traffic, so the connection stays open; a client that
+   * stops answering is dropped so its shell is let go promptly.
+   */
+  let alive = true;
+  ws.on('pong', () => {
+    alive = true;
+  });
+  const keepAlive = setInterval(() => {
+    if (ws.readyState !== ws.OPEN) return;
+    if (!alive) return ws.terminate(); // no answer since the last ping
+    alive = false;
+    ws.ping();
+  }, 25_000);
+
   // Project access per serviceId, memoized — deploy logs fire per line and
   // must not hit the db file every time.
   const accessCache = new Map();
@@ -126,6 +150,15 @@ wss.on('connection', (ws, req) => {
       accessCache.set(serviceId, svc ? canProject(auth, svc.projectId) : false);
     }
     return accessCache.get(serviceId);
+  };
+
+  // One shell event handler for both start and attach.
+  const onTermEvent = (e) => {
+    if (e.type === 'data') send('term:data', { data: e.data });
+    if (e.type === 'exit') {
+      send('term:exit', { code: e.code });
+      term = null;
+    }
   };
 
   // Forward deploy events the viewer is allowed to see; the client further
@@ -180,6 +213,20 @@ wss.on('connection', (ws, req) => {
       metricsTimer = null;
     }
 
+    // Re-attach to a shell this client already owns. The socket dies far more
+    // often than the shell does: a reconnect must not restart the work.
+    if (msg.action === 'term:attach') {
+      if (!can(auth, 'terminal')) return send('term:gone', { reason: 'Permission denied: terminal' });
+      const existing = terminal.getSession(String(msg.sessionId || ''), ownerKey);
+      if (!existing) return send('term:gone', { reason: 'session expired' });
+      term?.detach();
+      term = existing;
+      send('term:session', { sessionId: term.id, resumed: true });
+      term.attach(onTermEvent);
+      if (msg.cols && msg.rows) term.resize(msg.cols, msg.rows);
+      return;
+    }
+
     // Interactive shell. With serviceId it starts in that service's folder
     // with the service's env (same substitutions as a deploy — panel-only
     // secrets stripped); without it, a general shell at the projects root.
@@ -206,14 +253,16 @@ wss.on('connection', (ws, req) => {
         }
       }
       if (dir) {
-        term = openTerminal(
-          { cwd: dir, env, cols: msg.cols, rows: msg.rows },
-          (data) => send('term:data', { data }),
-          (code) => {
-            send('term:exit', { code });
-            term = null;
-          }
-        );
+        term = terminal.createSession({
+          cwd: dir,
+          env,
+          cols: msg.cols,
+          rows: msg.rows,
+          ownerKey,
+          label: msg.serviceId ? `service:${msg.serviceId}` : 'server',
+        });
+        send('term:session', { sessionId: term.id, resumed: false });
+        term.attach(onTermEvent);
       }
     }
     if (msg.action === 'term:input') term?.write(String(msg.data ?? ''));
@@ -226,7 +275,11 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     logChild?.kill();
-    term?.kill();
+    // Let go of the shell instead of killing it: the client reconnects within
+    // seconds and picks up where it left off, running commands included.
+    term?.detach();
+    term = null;
+    clearInterval(keepAlive);
     clearInterval(metricsTimer);
     bus.off('deploy-log', onDeployLog);
     bus.off('deploy-status', onDeployStatus);
