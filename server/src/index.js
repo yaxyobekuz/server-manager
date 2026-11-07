@@ -22,6 +22,7 @@ import systemRoutes from './routes/system.js';
 import githubRoutes from './routes/github.js';
 import adminRoutes from './routes/admins.js';
 import transferRoutes from './routes/transfer.js';
+import panelRoutes from './routes/panel.js';
 
 // Last-resort safety net: never let a stray async error from a child process
 // or library (e.g. pm2 IPC) take the whole platform down. We log and continue.
@@ -66,6 +67,9 @@ app.use('/api/admins', requireAuth, requireOwner, adminRoutes);
 // and the other panel authenticates with nothing but this server's own
 // admin password — exactly what a human types into the login box.
 app.use('/api/transfer', requireAuth, requireOwner, transferRoutes);
+// The panel updating itself. Owner-only: an update replaces the code that
+// enforces every permission, including this one.
+app.use('/api/panel', requireAuth, requireOwner, panelRoutes);
 
 // --- Serve built client ---------------------------------------------------
 if (fs.existsSync(config.clientDist)) {

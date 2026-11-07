@@ -12,6 +12,7 @@ import * as sysinfo from '../services/sysinfo.js';
 import { run } from '../services/exec.js';
 import { requirePerm, requireOwner } from '../auth.js';
 import { config } from '../config.js';
+import * as selfUpdate from '../services/selfUpdate.js';
 
 const router = Router();
 
@@ -49,11 +50,24 @@ router.get('/info', requirePerm('serverInfo'), async (req, res) => {
 // Everything GitHub's "Add webhook" form asks for, shown in the open, plus
 // the repos it has to be pasted into. Owner-only: the secret is the only
 // thing that makes a push trusted, so a created admin never sees it.
-router.get('/webhook', requireOwner, (req, res) => {
+router.get('/webhook', requireOwner, async (req, res) => {
   // One webhook belongs to a repo, not to a service — and one repo can feed
   // several services (a copied project keeps the same repoFullName), so the
   // list is grouped by repo.
   const repos = new Map();
+
+  // The panel's own repo belongs in the list too: the same webhook makes the
+  // panel update itself, and it is the one repo that is not a project here.
+  const own = await selfUpdate.ownRepoFullName();
+  if (own) {
+    repos.set(own.toLowerCase(), {
+      fullName: own,
+      settingsUrl: `https://github.com/${own}/settings/hooks`,
+      panel: true,
+      services: [],
+    });
+  }
+
   for (const project of store.listProjects()) {
     for (const svc of project.services || []) {
       if (svc.sourceType !== 'github' || !svc.repoFullName) continue;
@@ -82,7 +96,9 @@ router.get('/webhook', requireOwner, (req, res) => {
     event: 'push',
     envVar: 'GITHUB_WEBHOOK_SECRET',
     envFile: 'server/.env',
-    repos: [...repos.values()].sort((a, b) => a.fullName.localeCompare(b.fullName)),
+    repos: [...repos.values()].sort(
+      (a, b) => Number(Boolean(b.panel)) - Number(Boolean(a.panel)) || a.fullName.localeCompare(b.fullName)
+    ),
   });
 });
 

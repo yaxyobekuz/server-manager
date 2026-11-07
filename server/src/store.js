@@ -33,9 +33,10 @@ function read() {
     data.admins ||= [];
     data.servers ||= []; // other panels linked for project transfer
     data.transfers ||= []; // project transfer history
+    data.settings ||= {}; // panel-wide switches
     return data;
   } catch {
-    return { projects: [], services: [], deployments: [], admins: [], servers: [], transfers: [] };
+    return { projects: [], services: [], deployments: [], admins: [], servers: [], transfers: [], settings: {} };
   }
 }
 
@@ -60,6 +61,32 @@ function pushCreatedAt(row, iso, note) {
   row.createdAtHistory ||= [];
   row.createdAtHistory.push({ from: row.createdAt || null, to: iso, at: now(), ...(note ? { note } : {}) });
   row.createdAt = iso;
+}
+
+/* ----------------------------------------------------------------- Settings
+ * Panel-wide switches. Only non-secret preferences live here — passwords and
+ * keys stay in server/.env, which the panel never writes.
+ */
+
+const DEFAULT_SETTINGS = {
+  // Redeploy the panel itself when a push lands on its own repo.
+  selfUpdateAuto: false,
+};
+
+export function getSettings() {
+  return { ...DEFAULT_SETTINGS, ...read().settings };
+}
+
+/** Patch the known keys only — an unknown key from a request is ignored. */
+export function updateSettings(patch = {}) {
+  const db = read();
+  const next = { ...DEFAULT_SETTINGS, ...db.settings };
+  for (const key of Object.keys(DEFAULT_SETTINGS)) {
+    if (key in patch) next[key] = patch[key];
+  }
+  db.settings = next;
+  write(db);
+  return { ...next };
 }
 
 /* ----------------------------------------------------------------- Projects */

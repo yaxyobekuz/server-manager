@@ -3,15 +3,18 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client.js';
 import { Icon } from '../components/Icons.jsx';
 import { useMe, isOwner } from '../lib/useMe.js';
+import PanelUpdateCard from '../components/PanelUpdateCard.jsx';
 
 /**
- * Owner-only panel settings. Today it holds the GitHub webhook credentials:
- * the push URL and the shared secret, both shown in full and one click from
- * the clipboard, because the only way to wire a repo up is to paste them
- * into GitHub by hand. The owner already knows every other secret on this
- * box (they log in with ADMIN_PASSWORD), so there is nobody to hide them
- * from — but a created admin must never see them: the secret is the only
- * thing that makes an incoming push trusted.
+ * Owner-only panel settings: updating the panel itself, and the GitHub
+ * webhook credentials that both that and every project deploy run on.
+ *
+ * The credentials are shown in full and one click from the clipboard,
+ * because the only way to wire a repo up is to paste them into GitHub by
+ * hand. The owner already knows every other secret on this box (they log in
+ * with ADMIN_PASSWORD), so there is nobody to hide them from — but a created
+ * admin must never see them: the secret is the only thing that makes an
+ * incoming push trusted, and an update replaces the code that checks it.
  */
 export default function SettingsPage() {
   const me = useMe();
@@ -34,6 +37,7 @@ export default function SettingsPage() {
       </header>
 
       <div className="p-8 max-w-3xl space-y-4">
+        <PanelUpdateCard enabled={owner} />
         <WebhookCard enabled={owner} />
       </div>
     </div>
@@ -181,6 +185,7 @@ function RepoList({ repos }) {
                 {repo.fullName}
               </a>
               <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted">
+                {repo.panel && <span className="text-brand">the panel itself — auto-redeploy</span>}
                 {repo.services.map((s, i) => (
                   <span key={i}>
                     {s.project} / <span className="text-gray-400">{s.name}</span>

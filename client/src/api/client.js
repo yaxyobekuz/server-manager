@@ -100,6 +100,11 @@ export const api = {
   systemInfo: () => request('GET', '/system/info'),
   speedtest: (phase) => request('POST', `/system/speedtest/${phase}`),
   githubWebhook: () => request('GET', '/system/webhook'),
+  // The panel updating itself.
+  panel: () => request('GET', '/panel'),
+  panelCheck: () => request('GET', '/panel/check'),
+  panelUpdate: (force = false) => request('POST', '/panel/update', { force }),
+  panelSettings: (patch) => request('PATCH', '/panel/settings', patch),
   processes: () => request('GET', '/system/processes'),
   processAction: (id, action) => request('POST', `/system/processes/${id}/${action}`),
 };

@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { config } from '../config.js';
 import * as store from '../store.js';
 import { startDeployment } from '../services/deploy.js';
+import * as selfUpdate from '../services/selfUpdate.js';
 
 const router = Router();
 
@@ -21,7 +22,7 @@ function verifySignature(req) {
 }
 
 /** GitHub push -> auto deploy the matching service (if enabled). */
-router.post('/webhook', (req, res) => {
+router.post('/webhook', async (req, res) => {
   if (!verifySignature(req)) return res.status(401).json({ error: 'Invalid signature' });
 
   const event = req.headers['x-github-event'];
@@ -32,6 +33,23 @@ router.post('/webhook', (req, res) => {
   const fullName = payload.repository?.full_name;
   const pushedBranch = (payload.ref || '').replace('refs/heads/', '');
   const head = payload.head_commit;
+
+  // The panel's own repo is not a managed service: a push there updates the
+  // panel itself. Same webhook, same secret — one more repo to paste it into.
+  if (await selfUpdate.isOwnRepo(fullName)) {
+    if (!store.getSettings().selfUpdateAuto) {
+      return res.json({ ok: true, panel: true, message: 'Panel auto-update is off' });
+    }
+    const branch = await selfUpdate.currentBranch();
+    if (pushedBranch && branch && pushedBranch !== branch) {
+      return res.json({ ok: true, panel: true, message: `Panel is on ${branch}, ignoring ${pushedBranch}` });
+    }
+    const started = selfUpdate.start({ trigger: 'github' });
+    // 409 is the honest answer when one update is already running: GitHub
+    // shows the failed delivery and the push is not silently dropped.
+    if (!started.ok) return res.status(409).json({ ok: false, panel: true, error: started.error });
+    return res.json({ ok: true, panel: true, updating: true, pid: started.pid });
+  }
 
   // One repo can feed several services (a copied project reuses the same
   // repoFullName), so deploy EVERY matching service, not just the first.
