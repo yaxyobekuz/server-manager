@@ -84,16 +84,26 @@ function save(patch = {}) {
   }
 }
 
+const ANSI = /\u001b\[[0-9;]*m/g;
+
 function log(line, stream = 'out') {
   const at = new Date().toISOString().slice(11, 19);
   try {
-    fs.appendFileSync(LOG, `${at} ${stream === 'err' ? '! ' : ''}${line}\n`);
+    // Strip colour codes: this log is read in a browser, not a terminal.
+    fs.appendFileSync(LOG, `${at} ${stream === 'err' ? '! ' : ''}${String(line).replace(ANSI, '')}\n`);
   } catch {
     /* the log is a convenience; the state file is the contract */
   }
 }
 
 const onLine = ({ stream, line }) => log(line, stream === 'stderr' ? 'err' : 'out');
+
+/** pm2 reprints its whole process table after a restart — drop that part. */
+const pm2Line = ({ stream, line }) => {
+  const clean = line.replace(ANSI, '').trim();
+  if (/^[┌├└┐┘│]/.test(clean) || clean.includes('host metrics')) return;
+  log(line, stream === 'stderr' ? 'err' : 'out');
+};
 
 /** Read-only git, for values we want rather than output to stream. */
 const git = async (...args) => (await run('git', args, { cwd: ROOT })).stdout.trim();
@@ -145,7 +155,7 @@ async function rollback(sha, reason, { restart = false } = {}) {
 
   if (restart) {
     log(`==> pm2 restart ${pm2Name} (back on the working version)`);
-    if ((await runStream('pm2', ['restart', pm2Name], { cwd: ROOT }, onLine)) !== 0) ok = false;
+    if ((await runStream('pm2', ['restart', pm2Name], { cwd: ROOT }, pm2Line)) !== 0) ok = false;
   }
 
   if (ok) log('╰─ Rolled back. The panel is running the version it was before.');
@@ -219,7 +229,7 @@ async function main() {
   log(`==> pm2 restart ${pm2Name}`);
   // No --update-env: pm2 would then adopt THIS script's environment (SU_*
   // vars included), which every service deployed afterwards would inherit.
-  const code = await runStream('pm2', ['restart', pm2Name], { cwd: ROOT }, onLine);
+  const code = await runStream('pm2', ['restart', pm2Name], { cwd: ROOT }, pm2Line);
   // The panel process that asked for this update died on the line above.
   if (code !== 0) return rollback(from, `pm2 restart failed (exit ${code})`, { restart: true });
   save({ restarted: true, step: 'verify' });
