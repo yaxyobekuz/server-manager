@@ -23,6 +23,7 @@ import githubRoutes from './routes/github.js';
 import adminRoutes from './routes/admins.js';
 import transferRoutes from './routes/transfer.js';
 import panelRoutes from './routes/panel.js';
+import mcpRoutes from './routes/mcp.js';
 
 // Last-resort safety net: never let a stray async error from a child process
 // or library (e.g. pm2 IPC) take the whole platform down. We log and continue.
@@ -53,6 +54,10 @@ app.post('/api/login', (req, res) => {
   res.json({ token: result.token });
 });
 app.use('/api/github', githubRoutes); // auth'd by HMAC
+// MCP, for Claude on the user's own computer. Authenticated by its own access
+// key (header or ?key=), so it sits with the other public mounts — see
+// routes/mcp.js for why it is not behind requireAuth.
+app.use('/mcp', mcpRoutes);
 
 // --- Protected ------------------------------------------------------------
 // Who am I + what may I do — the client builds its navigation and hides

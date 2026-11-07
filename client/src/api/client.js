@@ -105,6 +105,10 @@ export const api = {
   panelCheck: () => request('GET', '/panel/check'),
   panelUpdate: (force = false) => request('POST', '/panel/update', { force }),
   panelSettings: (patch) => request('PATCH', '/panel/settings', patch),
+  // MCP access for Claude on the user's own computer.
+  panelMcp: () => request('GET', '/panel/mcp'),
+  panelMcpCreate: () => request('POST', '/panel/mcp'),
+  panelMcpRevoke: () => request('DELETE', '/panel/mcp'),
   processes: () => request('GET', '/system/processes'),
   processAction: (id, action) => request('POST', `/system/processes/${id}/${action}`),
 };

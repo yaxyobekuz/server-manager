@@ -72,6 +72,36 @@ Login uses a single `ADMIN_PASSWORD` from `server/.env`.
    secret = `GITHUB_WEBHOOK_SECRET`, event `push`.
 3. Every push now runs the deploy pipeline automatically.
 
+## Deploy from Claude (MCP)
+
+The panel is also an [MCP](https://modelcontextprotocol.io) server, so Claude
+on your own machine can drive it. Nothing to install — it is one URL.
+
+1. Open **Settings** in the panel and press **Generate the URL**. You get
+   `https://your-domain/mcp?key=…`.
+2. **Claude Desktop:** Settings → Connectors → *Add custom connector* → paste
+   the URL. **Claude Code:** `claude mcp add --transport http deploy "<url>"`.
+
+Then ask for what you want: *deploy E Murojaat/server*, *why did the last
+deploy fail*, *show me the bot's logs*, *restart the admin*.
+
+Eighteen tools. Reading: projects and services, deployments with their build
+logs, runtime logs, variables, domains, pm2 processes, server info, and the
+panel's own update state. Doing: deploy a service or a whole project,
+restart/stop/start, patch `.env`, attach a domain, update the panel. Deleting
+anything is deliberately absent — that stays in the web UI, where you can see
+what you are about to lose.
+
+Services are named `"Project/service"`; an id or a pm2 name works too.
+`deploy_service` waits for the deployment and returns the final status with
+the tail of the build log, so a failure comes back explained.
+
+Every tool goes through the panel's own HTTP API, so there is no second copy
+of the permission rules to keep in step. The key in the URL carries **owner
+rights** — treat it like the admin password, and press **Turn off** in
+Settings the moment a device holding it goes missing. Rotating is the same
+button twice.
+
 ## Moving a project to another server
 
 Both machines run this panel. On the one you are looking at, open **Servers →
@@ -172,6 +202,9 @@ handoff listener's own log.
 
 The platform runs commands on your server (git, pm2, nginx, certbot — the last
 two need root/sudo). Expose it only over HTTPS with a strong `ADMIN_PASSWORD`.
+
+The MCP endpoint (`/mcp`) is off until you generate a key, authenticates every
+single request against it, and is turned off again from the same button.
 
 Project transfer is **owner-only on both sides** — a bundle carries source
 code, `.env` files and database dumps. A linked server's password is stored

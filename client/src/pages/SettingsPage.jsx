@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client.js';
 import { Icon } from '../components/Icons.jsx';
 import { useMe, isOwner } from '../lib/useMe.js';
@@ -161,53 +161,86 @@ function NoSecret({ envVar, envFile }) {
 /* ------------------------------------------------------------- claude mcp */
 
 /**
- * Setup for the MCP server in mcp/, which runs on the user's own computer and
- * lets Claude deploy through this panel's API. Everything here is text they
- * have to paste somewhere else, so it is all copyable and the one value we
- * must not print — the password — is left as a placeholder.
+ * MCP access: one URL that Claude Desktop or Claude Code connects to, so the
+ * user installs nothing. The key in that URL is the whole authentication, so
+ * the card says what it can do and keeps revoking one click away.
  */
 function McpCard({ enabled }) {
-  const { data } = useQuery({ queryKey: ['panel'], queryFn: api.panel, enabled, staleTime: 60_000 });
-  const repo = data?.repo?.repoFullName || 'yaxyobekuz/server-manager';
-  const url = window.location.origin;
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState('');
+  const { data, error } = useQuery({ queryKey: ['panelMcp'], queryFn: api.panelMcp, enabled, staleTime: 30_000 });
 
-  const install = `git clone https://github.com/${repo}\ncd server-manager/mcp && npm install`;
-  const cli = `claude mcp add deploy --env DEPLOY_URL=${url} --env DEPLOY_PASSWORD='<panel password>' -- node /path/to/server-manager/mcp/index.js`;
-  const desktop = JSON.stringify(
-    {
-      mcpServers: {
-        deploy: {
-          command: 'node',
-          args: ['/path/to/server-manager/mcp/index.js'],
-          env: { DEPLOY_URL: url, DEPLOY_PASSWORD: '<panel password>' },
-        },
-      },
-    },
-    null,
-    2
-  );
+  const act = async (what, fn) => {
+    setBusy(what);
+    try {
+      await fn();
+      await queryClient.invalidateQueries({ queryKey: ['panelMcp'] });
+    } finally {
+      setBusy('');
+    }
+  };
+
+  if (error) return <div className="card p-5 text-sm text-danger">Could not read the MCP settings: {error.message}</div>;
+  if (!data) return <div className="card p-5 text-sm text-muted">Loading…</div>;
+
+  const url = `${window.location.origin}${data.path}${data.key ? `?key=${data.key}` : ''}`;
+  const cli = `claude mcp add --transport http deploy "${url}"`;
 
   return (
     <div className="card p-5">
-      <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-        <Icon.zap /> Deploy from Claude
-      </h2>
-      <p className="text-xs text-muted mt-1 leading-relaxed">
-        The repo ships an MCP server. Run it on your own computer and Claude can deploy services, read build logs and
-        restart things here — through this same API, with the same permissions. Full notes in{' '}
-        <code className="font-mono text-gray-300">mcp/README.md</code>.
-      </p>
-
-      <div className="mt-4 space-y-3">
-        <CopyField label="1 · on your computer" value={install} />
-        <CopyField label="2 · Claude Code" value={cli} />
-        <CopyField label="2 · or Claude Desktop — claude_desktop_config.json" value={desktop} />
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+            <Icon.zap /> Deploy from Claude
+          </h2>
+          <p className="text-xs text-muted mt-1 leading-relaxed">
+            This panel is also an MCP server. Give Claude the address below and it can deploy services, read build
+            logs, restart processes and edit variables here — {data.tools} tools, nothing to install.
+          </p>
+        </div>
+        {data.enabled && (
+          <button
+            onClick={() => act('revoke', api.panelMcpRevoke)}
+            disabled={Boolean(busy)}
+            className="btn-danger shrink-0 text-xs"
+            title="The URL stops working immediately"
+          >
+            <Icon.trash /> Turn off
+          </button>
+        )}
       </div>
 
-      <p className="text-xs text-muted mt-3">
-        Use a <span className="text-gray-300">dedicated admin password</span> rather than the owner one: create it in
-        Admins with only the permissions it needs, and you can disable it from here if that computer is ever lost.
-      </p>
+      {!data.enabled ? (
+        <div className="mt-4">
+          <button onClick={() => act('create', api.panelMcpCreate)} disabled={Boolean(busy)} className="btn-brand">
+            <Icon.zap /> {busy === 'create' ? 'Generating…' : 'Generate the URL'}
+          </button>
+          <p className="text-[11px] text-muted mt-2">Off until you do. No key, no access.</p>
+        </div>
+      ) : (
+        <>
+          <div className="mt-4 space-y-3">
+            <CopyField label="Claude Desktop — Settings → Connectors → Add custom connector" value={url} />
+            <CopyField label="Claude Code — run this once" value={cli} />
+          </div>
+
+          <div className="mt-4 pt-3 border-t border-line flex items-start justify-between gap-4">
+            <p className="text-xs text-warn leading-relaxed">
+              The key in that URL acts with <span className="text-gray-200">owner rights</span>. Treat it like the
+              panel password: paste it only into your own Claude, and turn it off here the moment a device with it
+              goes missing.
+            </p>
+            <button
+              onClick={() => act('rotate', api.panelMcpCreate)}
+              disabled={Boolean(busy)}
+              className="btn-ghost shrink-0 text-xs"
+              title="Issue a new key; the old URL stops working"
+            >
+              <Icon.restart /> {busy === 'rotate' ? 'Rotating…' : 'New key'}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

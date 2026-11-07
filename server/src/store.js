@@ -71,6 +71,10 @@ function pushCreatedAt(row, iso, note) {
 const DEFAULT_SETTINGS = {
   // Redeploy the panel itself when a push lands on its own repo.
   selfUpdateAuto: false,
+  // Access key for the MCP endpoint (/mcp). Empty = MCP is off. It is shown
+  // in the panel on purpose: it has to be pasted into a Claude config, and
+  // the owner already knows every other secret on this box.
+  mcpKey: '',
 };
 
 export function getSettings() {
