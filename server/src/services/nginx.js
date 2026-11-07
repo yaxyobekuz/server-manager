@@ -26,7 +26,17 @@ const accessLogLine = (domain) => `    access_log ${logPathFor(domain)} sm_metri
 export function ensureLogFormat() {
   const content =
     "# Managed by server-manager — parsed by its traffic metrics collector\n" +
-    "log_format sm_metrics '$time_iso8601|$host|$status|$body_bytes_sent|$request_time|$request';\n" +
+    // $request_method $uri, not $request: $request carries the query string,
+    // and a secret handed to the panel in a URL (the MCP endpoint takes the
+    // password that way) would otherwise be written to disk in plain text on
+    // every call. The collector only ever reads the path.
+    "log_format sm_metrics '$time_iso8601|$host|$status|$body_bytes_sent|$request_time|$request_method $uri';\n" +
+    // The ordinary combined log, minus the query string, for server blocks
+    // that are not generated here (the handoff listener). Same reason as
+    // above: a secret passed in a URL must not be written to disk.
+    "log_format sm_combined '$remote_addr - $remote_user [$time_local] "
+    + '"$request_method $uri $server_protocol" $status $body_bytes_sent '
+    + "\"$http_referer\" \"$http_user_agent\"';\n" +
     "\n# The scheme the client really used: the header when a proxy sent one,\n" +
     "# this server's own scheme otherwise.\n" +
     "map $http_x_forwarded_proto $sm_forwarded_proto {\n" +

@@ -75,12 +75,24 @@ Login uses a single `ADMIN_PASSWORD` from `server/.env`.
 ## Deploy from Claude (MCP)
 
 The panel is also an [MCP](https://modelcontextprotocol.io) server, so Claude
-on your own machine can drive it. Nothing to install — it is one URL.
+on your own machine can drive it. Nothing to install and no second secret:
+the panel's address and the password you log in with.
 
-1. Open **Settings** in the panel and press **Generate the URL**. You get
-   `https://your-domain/mcp?key=…`.
-2. **Claude Desktop:** Settings → Connectors → *Add custom connector* → paste
-   the URL. **Claude Code:** `claude mcp add --transport http deploy "<url>"`.
+**Claude Desktop** — Settings → Connectors → *Add custom connector*:
+
+```
+https://your-domain/mcp?password=<your panel password>
+```
+
+**Claude Code** — sends the password as a header, so it stays out of the URL:
+
+```bash
+claude mcp add --transport http deploy https://your-domain/mcp \
+  --header "Authorization: Bearer <your panel password>"
+```
+
+The **Settings** page prints both, filled in with this panel's own address,
+and will fill in the password too at one click.
 
 Then ask for what you want: *deploy E Murojaat/server*, *why did the last
 deploy fail*, *show me the bot's logs*, *restart the admin*.
@@ -96,11 +108,10 @@ Services are named `"Project/service"`; an id or a pm2 name works too.
 `deploy_service` waits for the deployment and returns the final status with
 the tail of the build log, so a failure comes back explained.
 
-Every tool goes through the panel's own HTTP API, so there is no second copy
-of the permission rules to keep in step. The key in the URL carries **owner
-rights** — treat it like the admin password, and press **Turn off** in
-Settings the moment a device holding it goes missing. Rotating is the same
-button twice.
+The password is checked by the same function the login box uses, so an admin
+password works too — and then the tools run with exactly that admin's
+permissions, because they go through the panel's own HTTP API with the token
+that login issued. There is no second copy of the permission rules.
 
 ## Moving a project to another server
 
@@ -203,8 +214,11 @@ handoff listener's own log.
 The platform runs commands on your server (git, pm2, nginx, certbot — the last
 two need root/sudo). Expose it only over HTTPS with a strong `ADMIN_PASSWORD`.
 
-The MCP endpoint (`/mcp`) is off until you generate a key, authenticates every
-single request against it, and is turned off again from the same button.
+The MCP endpoint (`/mcp`) authenticates every single request against the panel
+password, so changing `ADMIN_PASSWORD` cuts off anything that held the old
+one. A password in a URL is written to logs by whatever sits in front of the
+panel, so prefer the header form where the client supports it; nginx blocks
+this panel writes drop the query string for exactly that reason.
 
 Project transfer is **owner-only on both sides** — a bundle carries source
 code, `.env` files and database dumps. A linked server's password is stored

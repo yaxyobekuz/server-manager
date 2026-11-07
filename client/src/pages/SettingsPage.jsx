@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client.js';
 import { Icon } from '../components/Icons.jsx';
 import { useMe, isOwner } from '../lib/useMe.js';
@@ -161,85 +161,72 @@ function NoSecret({ envVar, envFile }) {
 /* ------------------------------------------------------------- claude mcp */
 
 /**
- * MCP access: one URL that Claude Desktop or Claude Code connects to, so the
- * user installs nothing. The key in that URL is the whole authentication, so
- * the card says what it can do and keeps revoking one click away.
+ * MCP access: the panel's address plus the panel's password, and that is the
+ * whole setup. The password is not in the page until the owner asks for it —
+ * one click, so the URL can be copied ready to paste, without it sitting on
+ * screen for anyone who walks past.
  */
 function McpCard({ enabled }) {
-  const queryClient = useQueryClient();
-  const [busy, setBusy] = useState('');
-  const { data, error } = useQuery({ queryKey: ['panelMcp'], queryFn: api.panelMcp, enabled, staleTime: 30_000 });
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const { data, error } = useQuery({ queryKey: ['panelMcp'], queryFn: api.panelMcp, enabled, staleTime: Infinity });
 
-  const act = async (what, fn) => {
-    setBusy(what);
+  const reveal = async () => {
+    setLoading(true);
     try {
-      await fn();
-      await queryClient.invalidateQueries({ queryKey: ['panelMcp'] });
+      const r = await api.panelMcpPassword();
+      setPassword(r.password || '');
     } finally {
-      setBusy('');
+      setLoading(false);
     }
   };
 
-  if (error) return <div className="card p-5 text-sm text-danger">Could not read the MCP settings: {error.message}</div>;
+  if (error) return <div className="card p-5 text-sm text-danger">Could not load the MCP details: {error.message}</div>;
   if (!data) return <div className="card p-5 text-sm text-muted">Loading…</div>;
 
-  const url = `${window.location.origin}${data.path}${data.key ? `?key=${data.key}` : ''}`;
-  const cli = `claude mcp add --transport http deploy "${url}"`;
+  const shown = password || 'YOUR-PANEL-PASSWORD';
+  const plain = `${window.location.origin}${data.path}`;
+  const url = `${plain}?password=${encodeURIComponent(shown)}`;
 
   return (
     <div className="card p-5">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-            <Icon.zap /> Deploy from Claude
-          </h2>
-          <p className="text-xs text-muted mt-1 leading-relaxed">
-            This panel is also an MCP server. Give Claude the address below and it can deploy services, read build
-            logs, restart processes and edit variables here — {data.tools} tools, nothing to install.
-          </p>
-        </div>
-        {data.enabled && (
-          <button
-            onClick={() => act('revoke', api.panelMcpRevoke)}
-            disabled={Boolean(busy)}
-            className="btn-danger shrink-0 text-xs"
-            title="The URL stops working immediately"
-          >
-            <Icon.trash /> Turn off
-          </button>
-        )}
+      <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+        <Icon.zap /> Deploy from Claude
+      </h2>
+      <p className="text-xs text-muted mt-1 leading-relaxed">
+        This panel is also an MCP server, so Claude on your own computer can deploy services, read build logs, restart
+        processes and edit variables here — {data.tools} tools, nothing to install. It takes this address and the
+        password you log in with; there is no second secret to manage.
+      </p>
+
+      {!data.ready && (
+        <p className="text-xs text-danger mt-3">
+          <code className="font-mono">ADMIN_PASSWORD</code> is not set in <code className="font-mono">server/.env</code>
+          , so there is nothing to log in with yet.
+        </p>
+      )}
+
+      <div className="mt-4 space-y-3">
+        <CopyField label="Claude Desktop — Settings → Connectors → Add custom connector" value={url} />
+        {/* The CLI can send a header, which keeps the password out of the URL
+            — and therefore out of every log between here and there. */}
+        <CopyField
+          label="Claude Code — run this once"
+          value={`claude mcp add --transport http deploy ${plain} --header "Authorization: Bearer ${shown}"`}
+        />
       </div>
 
-      {!data.enabled ? (
-        <div className="mt-4">
-          <button onClick={() => act('create', api.panelMcpCreate)} disabled={Boolean(busy)} className="btn-brand">
-            <Icon.zap /> {busy === 'create' ? 'Generating…' : 'Generate the URL'}
-          </button>
-          <p className="text-[11px] text-muted mt-2">Off until you do. No key, no access.</p>
-        </div>
+      {!password ? (
+        <button onClick={reveal} disabled={loading} className="btn-ghost text-xs mt-3">
+          <Icon.vars /> {loading ? 'One moment…' : 'Fill in my password'}
+        </button>
       ) : (
-        <>
-          <div className="mt-4 space-y-3">
-            <CopyField label="Claude Desktop — Settings → Connectors → Add custom connector" value={url} />
-            <CopyField label="Claude Code — run this once" value={cli} />
-          </div>
-
-          <div className="mt-4 pt-3 border-t border-line flex items-start justify-between gap-4">
-            <p className="text-xs text-warn leading-relaxed">
-              The key in that URL acts with <span className="text-gray-200">owner rights</span>. Treat it like the
-              panel password: paste it only into your own Claude, and turn it off here the moment a device with it
-              goes missing.
-            </p>
-            <button
-              onClick={() => act('rotate', api.panelMcpCreate)}
-              disabled={Boolean(busy)}
-              className="btn-ghost shrink-0 text-xs"
-              title="Issue a new key; the old URL stops working"
-            >
-              <Icon.restart /> {busy === 'rotate' ? 'Rotating…' : 'New key'}
-            </button>
-          </div>
-        </>
+        <p className="text-xs text-warn mt-3 leading-relaxed">
+          Those now carry your panel password — it is the whole login, so paste them only into your own Claude. To cut
+          off anything that holds it, change <code className="font-mono">ADMIN_PASSWORD</code> in{' '}
+          <code className="font-mono">server/.env</code> and restart the panel. The Claude Code form sends it as a
+          header instead of in the URL, which is the safer of the two where you have the choice.
+        </p>
       )}
     </div>
   );

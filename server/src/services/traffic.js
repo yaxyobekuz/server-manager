@@ -38,14 +38,14 @@ function managedDomains() {
   return domains;
 }
 
-/** '$time_iso8601|$host|$status|$body_bytes_sent|$request_time|$request' */
+/** '$time_iso8601|$host|$status|$body_bytes_sent|$request_time|$request_method $uri' */
 function parseLine(line) {
   const f = line.split('|');
   if (f.length < 6) return null;
   const t = Date.parse(f[0]);
   const status = Number(f[2]);
   if (!t || !status) return null;
-  const reqParts = f[5].split(' '); // "GET /path?q HTTP/1.1"
+  const reqParts = f[5].split(' '); // "GET /path" — older lines: "GET /path?q HTTP/1.1"
   const path = (reqParts[1] || '/').split('?')[0];
   return { t, status, bytes: Number(f[3]) || 0, path };
 }

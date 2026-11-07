@@ -71,22 +71,22 @@ function pushCreatedAt(row, iso, note) {
 const DEFAULT_SETTINGS = {
   // Redeploy the panel itself when a push lands on its own repo.
   selfUpdateAuto: false,
-  // Access key for the MCP endpoint (/mcp). Empty = MCP is off. It is shown
-  // in the panel on purpose: it has to be pasted into a Claude config, and
-  // the owner already knows every other secret on this box.
-  mcpKey: '',
 };
 
 export function getSettings() {
   return { ...DEFAULT_SETTINGS, ...read().settings };
 }
 
-/** Patch the known keys only — an unknown key from a request is ignored. */
+/**
+ * Patch the known keys only — an unknown key from a request is ignored, and a
+ * key that USED to be known (a setting that has since been removed) is pruned
+ * rather than carried in the file forever.
+ */
 export function updateSettings(patch = {}) {
   const db = read();
-  const next = { ...DEFAULT_SETTINGS, ...db.settings };
-  for (const key of Object.keys(DEFAULT_SETTINGS)) {
-    if (key in patch) next[key] = patch[key];
+  const next = {};
+  for (const [key, fallback] of Object.entries(DEFAULT_SETTINGS)) {
+    next[key] = key in patch ? patch[key] : (db.settings?.[key] ?? fallback);
   }
   db.settings = next;
   write(db);

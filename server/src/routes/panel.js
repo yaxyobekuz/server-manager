@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import * as store from '../store.js';
 import * as selfUpdate from '../services/selfUpdate.js';
-import { newKey } from './mcp.js';
 import { toolCount } from '../mcp/server.js';
+import { config } from '../config.js';
 
 /**
  * The panel managing itself: which commit it runs, whether the repo has
@@ -46,25 +46,21 @@ router.post('/update', (req, res) => {
   res.json(started);
 });
 
-/* ---------------------------------------------------------------- mcp key
- * The key for /mcp. Generating replaces whatever was there, which is also how
- * you rotate one; deleting turns MCP off entirely. Both are owner-only, like
- * everything else here.
+/* -------------------------------------------------------------------- mcp
+ * What the Settings page needs to print the connection URL. There is no key
+ * to manage: /mcp takes the panel password itself.
  */
 router.get('/mcp', (req, res) => {
-  const key = store.getSettings().mcpKey || '';
-  res.json({ enabled: Boolean(key), key, path: '/mcp', tools: toolCount() });
+  res.json({ path: '/mcp', tools: toolCount(), ready: Boolean(config.adminPassword) });
 });
 
-router.post('/mcp', (req, res) => {
-  const key = newKey();
-  store.updateSettings({ mcpKey: key });
-  res.json({ enabled: true, key, path: '/mcp', tools: toolCount() });
-});
-
-router.delete('/mcp', (req, res) => {
-  store.updateSettings({ mcpKey: '' });
-  res.json({ enabled: false, key: '', path: '/mcp' });
+/**
+ * The owner's own password, so the page can offer a URL that is ready to
+ * paste. Deliberately a separate request: the password is not part of any
+ * payload the page loads on its own, only of one the owner asks for.
+ */
+router.get('/mcp/password', (req, res) => {
+  res.json({ password: config.adminPassword || '' });
 });
 
 router.patch('/settings', (req, res) => {
