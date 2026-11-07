@@ -62,3 +62,29 @@ export function streamLogs(idOrName, onEvent) {
     },
   };
 }
+
+/**
+ * A snapshot of the last lines of a service's logs, for callers that cannot
+ * hold a stream open — the HTTP API and, through it, the MCP server. Same
+ * two files `streamLogs` tails, so out and err stay apart.
+ */
+export async function recentLogs(idOrName, { lines = 100 } = {}) {
+  const proc = await describe(idOrName).catch(() => null);
+  if (!proc) return { found: false, pm2Name: idOrName, out: [], err: [] };
+  const n = Math.min(Math.max(Number(lines) || 100, 1), 2000);
+
+  const tail = (file) =>
+    new Promise((resolve) => {
+      if (!file || !fs.existsSync(file)) return resolve([]);
+      const child = spawn('tail', ['-n', String(n), file], { shell: false });
+      let buf = '';
+      child.stdout.on('data', (c) => {
+        buf += c.toString();
+      });
+      child.on('error', () => resolve([]));
+      child.on('close', () => resolve(buf.split('\n').filter((l) => l.length)));
+    });
+
+  const [out, err] = await Promise.all([tail(proc.outLogPath), tail(proc.errLogPath)]);
+  return { found: true, pm2Name: proc.name, status: proc.status, out, err };
+}

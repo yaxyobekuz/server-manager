@@ -1,0 +1,20 @@
+{
+  "name": "server-manager-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server for the Deploy panel — lets Claude deploy, inspect and restart services on the VPS",
+  "bin": {
+    "server-manager-mcp": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "check": "node index.js --selftest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

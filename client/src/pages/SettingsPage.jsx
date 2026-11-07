@@ -40,6 +40,7 @@ export default function SettingsPage() {
       <div className="p-8 max-w-3xl space-y-4">
         <PanelUpdateCard enabled={owner} />
         <WebhookCard enabled={owner} />
+        <McpCard enabled={owner} />
       </div>
     </div>
   );
@@ -113,7 +114,7 @@ function CopyField({ label, value }) {
     <div>
       <div className="text-[11px] text-muted uppercase tracking-wide">{label}</div>
       <div className="mt-1.5 flex items-stretch gap-2">
-        <code className="flex-1 min-w-0 rounded-lg border border-line bg-bg-input px-3 py-2 font-mono text-[13px] text-gray-200 break-all select-all">
+        <code className="flex-1 min-w-0 rounded-lg border border-line bg-bg-input px-3 py-2 font-mono text-[13px] text-gray-200 break-all select-all whitespace-pre-wrap">
           {value}
         </code>
         <button
@@ -153,6 +154,60 @@ function NoSecret({ envVar, envFile }) {
         this once on the server, then reload this page and the secret appears here.
       </p>
       <CopyField label="Run on the server" value={snippet} />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------- claude mcp */
+
+/**
+ * Setup for the MCP server in mcp/, which runs on the user's own computer and
+ * lets Claude deploy through this panel's API. Everything here is text they
+ * have to paste somewhere else, so it is all copyable and the one value we
+ * must not print — the password — is left as a placeholder.
+ */
+function McpCard({ enabled }) {
+  const { data } = useQuery({ queryKey: ['panel'], queryFn: api.panel, enabled, staleTime: 60_000 });
+  const repo = data?.repo?.repoFullName || 'yaxyobekuz/server-manager';
+  const url = window.location.origin;
+
+  const install = `git clone https://github.com/${repo}\ncd server-manager/mcp && npm install`;
+  const cli = `claude mcp add deploy --env DEPLOY_URL=${url} --env DEPLOY_PASSWORD='<panel password>' -- node /path/to/server-manager/mcp/index.js`;
+  const desktop = JSON.stringify(
+    {
+      mcpServers: {
+        deploy: {
+          command: 'node',
+          args: ['/path/to/server-manager/mcp/index.js'],
+          env: { DEPLOY_URL: url, DEPLOY_PASSWORD: '<panel password>' },
+        },
+      },
+    },
+    null,
+    2
+  );
+
+  return (
+    <div className="card p-5">
+      <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+        <Icon.zap /> Deploy from Claude
+      </h2>
+      <p className="text-xs text-muted mt-1 leading-relaxed">
+        The repo ships an MCP server. Run it on your own computer and Claude can deploy services, read build logs and
+        restart things here — through this same API, with the same permissions. Full notes in{' '}
+        <code className="font-mono text-gray-300">mcp/README.md</code>.
+      </p>
+
+      <div className="mt-4 space-y-3">
+        <CopyField label="1 · on your computer" value={install} />
+        <CopyField label="2 · Claude Code" value={cli} />
+        <CopyField label="2 · or Claude Desktop — claude_desktop_config.json" value={desktop} />
+      </div>
+
+      <p className="text-xs text-muted mt-3">
+        Use a <span className="text-gray-300">dedicated admin password</span> rather than the owner one: create it in
+        Admins with only the permissions it needs, and you can disable it from here if that computer is ever lost.
+      </p>
     </div>
   );
 }

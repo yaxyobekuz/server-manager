@@ -11,6 +11,7 @@ import { teardownService } from '../services/teardown.js';
 import * as pm2 from '../services/pm2.js';
 import * as traffic from '../services/traffic.js';
 import * as domainScan from '../services/domainScan.js';
+import * as logs from '../services/logs.js';
 import { can, canProject, requirePerm } from '../auth.js';
 
 const router = Router();
@@ -177,6 +178,21 @@ async function servicePm2(req, res, verb) {
 
 router.post('/:id/stop', requirePerm('deploy'), (req, res) => servicePm2(req, res, 'stop'));
 router.post('/:id/start', requirePerm('deploy'), (req, res) => servicePm2(req, res, 'start'));
+
+/**
+ * A snapshot of the service's runtime logs. The live view uses the WebSocket;
+ * this is for callers that just want the last N lines once — the MCP server,
+ * a script, a quick look from curl.
+ */
+router.get('/:id/logs', requirePerm('logs'), async (req, res) => {
+  const service = store.getService(req.params.id);
+  if (!service) return res.status(404).json({ error: 'Service not found' });
+  try {
+    res.json(await logs.recentLogs(service.pm2Name || service.name, { lines: req.query.lines }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.get('/:id/deployments', (req, res) => {
   res.json({ deployments: store.listDeployments(req.params.id) });
